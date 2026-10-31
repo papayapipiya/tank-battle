@@ -1,0 +1,79 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>坦克大戰 - Battle City</title>
+<link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+
+<div class="title-bar">坦 克 大 戰</div>
+
+<div class="game-container">
+  <!-- Left Panel -->
+  <div class="panel panel-left">
+    <div class="panel-section">
+      <div class="panel-label">STAGE</div>
+      <div class="panel-value" id="stageDisplay">1</div>
+    </div>
+    <div class="panel-section">
+      <div class="panel-label">分數</div>
+      <div class="panel-value" id="scoreDisplay">0</div>
+    </div>
+    <div class="panel-section">
+      <div class="panel-label">最高</div>
+      <div class="panel-value hi" id="hiScoreDisplay">0</div>
+    </div>
+    <div class="panel-divider"></div>
+    <div class="panel-section">
+      <div class="panel-label">生命</div>
+      <div class="icon-row" id="livesDisplay"></div>
+    </div>
+    <div class="panel-section">
+      <div class="panel-label">火力</div>
+      <div class="power-stars" id="powerDisplay">★</div>
+    </div>
+  </div>
+
+  <!-- Game Canvas -->
+  <canvas id="gameCanvas"></canvas>
+
+  <!-- Right Panel -->
+  <div class="panel panel-right">
+    <div class="panel-section">
+      <div class="panel-label">敵軍</div>
+      <div class="enemy-icons" id="enemyIcons"></div>
+    </div>
+    <div class="panel-divider"></div>
+    <div class="panel-section">
+      <div class="panel-label">操作</div>
+      <div class="controls-list">
+        <div><kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd> 移動</div>
+        <div><kbd>J</kbd> 射擊</div>
+        <div><kbd>T</kbd> AI 對戰觀戰</div>
+        <div><kbd>P</kbd> 暫停</div>
+        <div><kbd>R</kbd> 重開本關</div>
+        <div><kbd>Enter</kbd> 開始</div>
+        <div><kbd>M</kbd> 靜音</div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="footer-bar">© 1985 NAMCO — HTML5 重製版</div>
+
+<script src="js/constants.js"></script>
+<script src="js/input.js"></script>
+<script src="js/audio.js"></script>
+<script src="js/sprites.js"></script>
+<script src="js/stages.js"></script>
+<script src="js/map.js"></script>
+<script src="js/entities.js"></script>
+<script src="js/ai.js"></script>
+<script src="js/powerups.js"></script>
+<script src="js/renderer.js"></script>
+<script src="js/game.js"></script>
+
+</body>
+</html>

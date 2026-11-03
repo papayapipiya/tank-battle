@@ -1,0 +1,1094 @@
+<!DOCTYPE html>
+<!-- ai/live.html — 即時訓練看板
+     ═══════════════════════════════════════════════════════════
+     使用者的原話：「請建立一個html，隨時打開可以隨時看訓練結果，即時的」。
+
+     這頁只做三件事：
+       1. 讀同目錄的 live-data.js（window.__LIVE__），每 3 秒重讀一次。
+       2. 把「現在第幾代、最佳／平均、這一段跑到哪、冠軍是誰」畫出來。
+       3. 誠實標記資料有多舊、是訓練程序寫的還是檔案監看寫的。
+
+     為什麼是 <script> 而不是 fetch：
+       file:// 下瀏覽器擋 fetch()／XHR 讀本機檔（CORS），但 <script src>
+       可以。資料由 ai/evolve.js 每代覆寫（running 是確定的布林值），
+       或由 node ai/live.js --watch 監看 checkpoint（running 留 null，
+       ＞不會謊稱「訓練中」）。
+
+     ⚠ 這一頁不重算任何分數：所有數字照抄訓練存檔／記憶體，
+       所以看板不會比訓練本身更貴，也不會出現兩套適應度。
+     ═══════════════════════════════════════════════════════════ -->
+<html lang="zh-Hant">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>坦克大戰 · 即時訓練看板</title>
+<style>
+  :root {
+    --bg: #0d1117; --panel: #161b22; --panel2: #1c2330; --line: #2a3140;
+    --fg: #e6edf3; --dim: #8b98a9; --good: #3fb950; --warn: #d29922; --bad: #f85149;
+    --blue: #4c9ff5; --red: #ff6b6b; --gold: #f0c48a; --violet: #bc8cff;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--fg);
+    font: 16px/1.6 "Segoe UI", "PingFang TC", "Microsoft JhengHei", system-ui, sans-serif; }
+  header { padding: 16px 22px 13px; border-bottom: 1px solid var(--line); background: var(--panel); }
+  .hrow { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; flex-wrap: wrap; }
+  h1 { margin: 0 0 4px; font-size: 19px; }
+  h2 { margin: 0 0 12px; font-size: 18px; }
+  h3 { margin: 16px 0 8px; font-size: 17px; color: var(--dim); font-weight: 600; }
+  .sub { color: var(--dim); font-size: 16px; }
+  main { padding: 18px 22px 60px; max-width: 1320px; margin: 0 auto; }
+  section { background: var(--panel); border: 1px solid var(--line); border-radius: 10px;
+    padding: 16px 18px; margin-bottom: 18px; }
+  .grid2 { display: grid; grid-template-columns: minmax(0, 1.2fr) minmax(0, 1fr); gap: 18px; }
+  .grid2 > section { margin-bottom: 0; }
+  .grid2 + section { margin-top: 18px; }
+  @media (max-width: 900px) { .grid2 { grid-template-columns: 1fr; } .grid2 > section { margin-bottom: 0; } }
+  .band { display: grid; grid-template-columns: repeat(auto-fit, minmax(178px, 1fr)); gap: 10px; }
+  .tile { background: var(--panel2); border: 1px solid var(--line); border-radius: 8px; padding: 10px 12px; }
+  .tile .k { color: var(--dim); font-size: 16px; }
+  .tile .v { font-size: 21px; font-weight: 600; margin-top: 2px; letter-spacing: .2px; }
+  .tile .n { color: var(--dim); font-size: 16px; margin-top: 2px; min-height: 24px; }
+  .tile.ok .v { color: var(--good); } .tile.mid .v { color: var(--warn); } .tile.no .v { color: var(--bad); }
+  .tile.gold .v { color: var(--gold); } .tile.blue .v { color: var(--blue); }
+  .status { display: inline-flex; align-items: center; gap: 9px; background: var(--panel2);
+    border: 1px solid var(--line); border-radius: 999px; padding: 7px 15px; font-size: 16px; white-space: nowrap; }
+  .status .dot { width: 9px; height: 9px; border-radius: 50%; background: var(--dim); }
+  .status.live { border-color: #2f6b3f; color: #a8e0b5; }
+  .status.live .dot { background: var(--good); animation: pulse 1.8s ease-out infinite; }
+  .status.stopped { color: var(--dim); }
+  .status.watch { border-color: #6a4a2a; color: var(--gold); }
+  .status.watch .dot { background: var(--warn); }
+  .status.dead { border-color: #6a2a2a; color: #ffb3ae; }
+  .status.dead .dot { background: var(--bad); }
+  @keyframes pulse { 0% { box-shadow: 0 0 0 0 rgba(63,185,80,.55); }
+    70% { box-shadow: 0 0 0 9px rgba(63,185,80,0); } 100% { box-shadow: 0 0 0 0 rgba(63,185,80,0); } }
+  .alert { border-left: 4px solid var(--bad); background: #241417; border-radius: 8px;
+    padding: 10px 12px; margin-bottom: 14px; font-size: 16px; }
+  .note { border-left: 4px solid var(--blue); background: #131c28; border-radius: 8px;
+    padding: 10px 12px; margin-bottom: 14px; font-size: 16px; color: #bcd3ee; }
+  .warnbox { border-left: 4px solid var(--warn); background: #221c11; border-radius: 8px;
+    padding: 10px 12px; margin-bottom: 14px; font-size: 16px; color: #ecd9ae; }
+  .tag { display: inline-block; font-size: 16px; padding: 1px 8px; border-radius: 999px;
+    border: 1px solid var(--line); color: var(--dim); margin-left: 6px; vertical-align: 1px; }
+  .tag.c { border-color: #35507a; color: #9cc4f5; }
+  .tag.p { border-color: #6a4a2a; color: var(--gold); }
+  .tag.g { border-color: #2f6b3f; color: #8fd0a0; }
+  .tag.r { border-color: #6a2a2a; color: #ffb3ae; }
+  table { border-collapse: collapse; width: 100%; font-size: 16px; }
+  th, td { border-bottom: 1px solid var(--line); padding: 5px 8px; text-align: right; white-space: nowrap; }
+  th:first-child, td:first-child, th.l, td.l { text-align: left; }
+  th { color: var(--dim); font-weight: 600; position: sticky; top: 0; background: var(--panel); z-index: 1; }
+  td.good { color: var(--good); } td.bad { color: var(--bad); } td.mid { color: var(--warn); }
+  td.gold { color: var(--gold); } td.dim { color: var(--dim); }
+  .scroll { overflow: auto; max-height: 380px; border: 1px solid var(--line); border-radius: 8px; padding: 0 6px; }
+  .chartwrap { position: relative; }
+  canvas { width: 100%; height: 340px; display: block; image-rendering: auto; }
+  .tip { position: absolute; pointer-events: none; background: #0d1117f2; border: 1px solid var(--line);
+    border-radius: 6px; padding: 6px 9px; font-size: 16px; display: none; white-space: nowrap; z-index: 3;
+    box-shadow: 0 6px 18px #0008; }
+  .legend { display: flex; flex-wrap: wrap; gap: 14px; margin-top: 8px; font-size: 16px; color: var(--dim); }
+  .legend i { display: inline-block; width: 14px; height: 3px; border-radius: 2px; margin-right: 5px; vertical-align: 3px; }
+  .legend i.dash { background: none !important; border-top: 2px dashed; height: 0; }
+  /* 表格裡也要有色塊，但 .legend i 綁在圖例容器下 → 獨立一份（虛線＝參考尺不進適應度） */
+  i.sw { display: inline-block; width: 14px; height: 0; border-top: 2px dashed;
+    margin-right: 6px; vertical-align: 3px; }
+  .shead { display: flex; justify-content: space-between; align-items: baseline; flex-wrap: wrap; gap: 10px; }
+  .chips { display: flex; flex-wrap: wrap; gap: 7px; }
+  button.chip { background: var(--panel2); color: var(--fg); border: 1px solid var(--line);
+    border-radius: 999px; padding: 4px 12px; cursor: pointer; font-size: 16px; }
+  button.chip.on { border-color: var(--blue); background: #17263a; }
+  button.chip:hover { border-color: var(--dim); }
+  .kv { display: grid; grid-template-columns: repeat(auto-fit, minmax(190px, 1fr)); gap: 8px 14px; margin-top: 8px; }
+  .kv .it { background: var(--panel2); border: 1px solid var(--line); border-radius: 8px; padding: 8px 10px; }
+  .kv .k { color: var(--dim); font-size: 16px; } .kv .v { font-size: 16px; margin-top: 1px; }
+  code { background: #0f141b; border: 1px solid var(--line); border-radius: 4px; padding: 1px 5px; font-size: 16px; }
+  pre { margin: 8px 0 0; background: #0f141b; border: 1px solid var(--line); border-radius: 8px;
+    padding: 10px 12px; overflow: auto; font-size: 16px; line-height: 1.7; color: #cdd9e5; }
+  .bar { height: 8px; border-radius: 999px; background: #0f141b; border: 1px solid var(--line); overflow: hidden; margin: 8px 0 6px; }
+  .bar > i { display: block; height: 100%; width: 0; background: linear-gradient(90deg, #2f6b3f, var(--good)); transition: width .4s; }
+  .rowline { display: flex; justify-content: space-between; gap: 12px; font-size: 16px; }
+  .muted { color: var(--dim); }
+  .big { font-size: 22px; font-weight: 600; }
+  details { margin-top: 10px; } summary { cursor: pointer; color: var(--dim); }
+  a { color: var(--blue); }
+  .help { border-top: 1px dashed var(--line); }
+  .empty { color: var(--dim); font-size: 16px; padding: 8px 2px; }
+</style>
+</head>
+<body>
+<header>
+  <div class="hrow">
+    <div>
+      <h1>坦克大戰 · 即時訓練看板</h1>
+      <div class="sub" id="headsub">正在讀取 live-data.js …</div>
+    </div>
+    <div>
+      <div id="status" class="status"><span class="dot"></span><span id="statusText">載入中</span></div>
+      <div class="sub" style="text-align:right;margin-top:6px" id="hbeat">自動重讀：每 3 秒</div>
+    </div>
+  </div>
+</header>
+<main>
+  <div id="alerts"></div>
+
+  <section>
+    <div class="band" id="tiles">
+      <div class="tile"><div class="k">目前世代</div><div class="v">—</div></div>
+      <div class="tile"><div class="k">歷史最佳</div><div class="v">—</div></div>
+      <div class="tile"><div class="k">本代平均</div><div class="v">—</div></div>
+      <div class="tile"><div class="k">累計場數</div><div class="v">—</div></div>
+    </div>
+  </section>
+
+  <section>
+    <div class="shead">
+      <h2>收斂曲線 <span class="sub" id="chartNote"></span></h2>
+      <div class="chips" id="rangeChips">
+        <button class="chip on" data-range="all">全部</button>
+        <button class="chip" data-range="200">最近 200 代</button>
+        <button class="chip" data-range="50">最近 50 代</button>
+      </div>
+    </div>
+    <div class="chartwrap">
+      <canvas id="chart"></canvas>
+      <div class="tip" id="tip"></div>
+    </div>
+    <div class="legend">
+      <span><i style="background:var(--gold)"></i>每代最佳</span>
+      <span><i style="background:var(--blue)"></i>每代平均</span>
+      <span><i style="background:var(--good)" class="dash"></i>現任冠軍</span>
+      <span><i style="border-color:var(--red)" class="dash"></i>換考題</span>
+      <span><i style="border-color:var(--warn)" class="dash"></i>換算分版本</span>
+      <span><i style="border-color:#e075c8" class="dash"></i>換對手（交替演化）</span>
+      <span><i style="border-color:#5a6678" class="dash"></i>工作階段開始</span>
+      <!-- display:contents 讓裡面的每一條參考尺各自成為 flex 項目，才會跟上圖例的 14px 間距 -->
+      <span id="refLegend" style="display:contents"></span>
+    </div>
+    <div class="sub" style="margin-top:8px">縱軸是每代族群的最佳／平均適應度（已含地板與封頂）；要看「還沒被地板壓住」的水位請看下方逐代紀錄的原始分欄。最佳線在冠軍未被突破時會貼齊冠軍（菁英保留），要看族群整體有沒有在學請看平均線。換考題／換算分版本的那條線前後不是同一把尺，不能直接比高低。接縫太密時（交替演化每段都換一次對手）只標幾條代表，其餘的「換對手」照樣畫淡虛線、只是不寫字，位置沒丟 —— 把滑鼠移到那個世代上看代數與原因就好。</div>
+  </section>
+
+  <section>
+    <h2>固定參考尺 <span class="sub" id="refNote"></span></h2>
+    <div id="refBody"><div class="empty">這份存檔還沒有參考尺紀錄（用 --ref 給一個永不更新的凍結快照才會出現）。</div></div>
+  </section>
+
+  <div class="grid2">
+    <section>
+      <h2>本段訓練進度</h2>
+      <div id="sessionBody"><div class="empty">尚無工作階段資料。</div></div>
+    </section>
+    <section>
+      <h2>冠軍</h2>
+      <div id="championBody"><div class="empty">尚無冠軍。</div></div>
+    </section>
+  </div>
+
+  <section>
+    <h2>考題與設定</h2>
+    <div id="configBody"><div class="empty">—</div></div>
+  </section>
+
+  <section>
+    <h2>實戰考績 <span class="sub">（node ai/ledger.js --verify 寫入；考核種子與訓練不同）</span></h2>
+    <div id="assessBody"><div class="empty">這份存檔還沒有實戰考績。</div></div>
+  </section>
+
+  <div class="grid2">
+    <section>
+      <h2>最近世代</h2>
+      <div class="scroll" id="gensBody"><div class="empty">尚無世代紀錄。</div></div>
+    </section>
+    <section>
+      <h2>工作階段</h2>
+      <div class="scroll" id="timelineBody"><div class="empty">尚無工作階段紀錄。</div></div>
+    </section>
+  </div>
+
+  <section class="help" style="margin-top:18px">
+    <h2>怎麼讓這頁動起來</h2>
+    <div class="sub">這頁只讀 <code>ai/live-data.js</code>，不會自己訓練。資料有兩種來源：</div>
+    <pre># 1) 正常訓練：ai/evolve.js 每代自動覆寫 live-data.js（推薦）
+node ai/evolve.js --resume runs/warm-v2.json --gens 20
+
+# 2) 訓練已經在跑、來不及重開：另開一個視窗監看 checkpoint
+node ai/live.js --watch runs/warm-v2.json
+
+# 只寫一次快照（不監看）
+node ai/live.js --once runs/warm-v2.json</pre>
+    <div class="sub" style="margin-top:8px">
+      監看模式只看得到「檔案有變」，不知道訓練程序是否還活著，所以狀態會顯示「檔案監看」而不是「訓練中」。
+      訓練程序自己寫的那份會帶確定的 running 狀態；程序結束（含 Ctrl+C）時會寫成「已停止」。
+      完整訓練履歷與評判標準：<a href="ledger.html">ai/ledger.html</a>。
+    </div>
+  </section>
+</main>
+
+<script>
+(function () {
+  'use strict';
+
+  const REFRESH_MS = 3000;
+  const $ = id => document.getElementById(id);
+  const esc = s => String(s === null || s === undefined ? '' : s)
+    .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+  const n = v => (v === null || v === undefined || !Number.isFinite(Number(v))) ? '—' : Number(v).toLocaleString('en-US');
+  const f2 = v => (v === null || v === undefined || !Number.isFinite(Number(v))) ? '—' : Number(v).toFixed(2);
+  const f1 = v => (v === null || v === undefined || !Number.isFinite(Number(v))) ? '—' : Number(v).toFixed(1);
+  const pct = (v, d) => (v === null || v === undefined || !Number.isFinite(Number(v))) ? '—' : (100 * Number(v)).toFixed(d === undefined ? 0 : d) + '%';
+  const dt = iso => iso ? String(iso).slice(5, 16).replace('T', ' ') : '—';
+  const agoSec = sec => {
+    if (sec === null || sec === undefined || !Number.isFinite(sec)) return '—';
+    if (sec < 2) return '剛剛';
+    if (sec < 60) return Math.round(sec) + ' 秒前';
+    if (sec < 3600) return Math.floor(sec / 60) + ' 分前';
+    return (sec / 3600).toFixed(1) + ' 小時前';
+  };
+  const dur = sec => {
+    if (sec === null || sec === undefined || !Number.isFinite(sec)) return '—';
+    const s = Math.max(0, Math.round(sec));
+    if (s < 60) return s + ' 秒';
+    if (s < 3600) return Math.floor(s / 60) + ' 分 ' + (s % 60) + ' 秒';
+    return Math.floor(s / 3600) + ' 小時 ' + Math.floor((s % 3600) / 60) + ' 分';
+  };
+  const stageStr = a => Array.isArray(a) ? '[' + a.join(',') + ']' : '—';
+
+  let D = null;              // 最近一次讀到的 payload
+  let lastSig = '';
+  let lastLoadAt = 0;
+  let failCount = 0;
+  let seq = 0;
+  let rangeMode = 'all';
+  let chartData = [];
+  let hoverIndex = -1;
+
+  /* ── 讀資料：file:// 只能用 <script src> ────────────────── */
+  function liveAgeSec() {
+    if (!D) return null;
+    const t = D.$ageHint === 'checkpoint' ? Date.parse(D.checkpointMtime || '')
+      : Date.parse(D.at || '');
+    return Number.isFinite(t) ? (Date.now() - t) / 1000 : null;
+  }
+
+  function statusInfo() {
+    if (!D) return { cls: '', text: '等待資料' };
+    const age = liveAgeSec();
+    if (D.running === true) {
+      return { cls: 'live', text: '訓練中 · 第 ' + n(D.gen) + ' 代' + (age !== null ? '（' + agoSec(age) + '更新）' : '') };
+    }
+    // 單次快照：資料不會再變，標清楚，不要讓人以為還在等更新
+    if (D.mode === 'snapshot') {
+      return { cls: '', text: '快照 · 最後更新 ' + agoSec(age) };
+    }
+    if (D.running === false) {
+      return { cls: 'stopped', text: '已停止 · 最後更新 ' + agoSec(age) };
+    }
+    // running 未知：檔案監看
+    if (age !== null && age > 180) return { cls: 'dead', text: '檔案已 ' + agoSec(age) + '沒動 · 可能停了' };
+    return { cls: 'watch', text: '檔案監看 · 最後寫入 ' + agoSec(age) };
+  }
+
+  function drawStatus() {
+    const s = statusInfo();
+    const el = $('status');
+    el.className = 'status' + (s.cls ? ' ' + s.cls : '');
+    $('statusText').textContent = s.text;
+  }
+
+  function loadLive() {
+    const old = document.getElementById('live-src');
+    if (old) old.remove();
+    const s = document.createElement('script');
+    s.id = 'live-src';
+    // cache-buster：同一個檔案重載時，瀏覽器可能直接拿快取；
+    // 每次換一個 query 就會真的重讀（file:// 也適用）。
+    s.src = 'live-data.js?t=' + Date.now() + '-' + (++seq);
+    s.onload = () => {
+      failCount = 0;
+      lastLoadAt = Date.now();
+      const data = window.__LIVE__;
+      if (!data || data.kind !== 'tank-battle-live') {
+        failCount++;
+        showFatal('live-data.js 載入了，但沒有 window.__LIVE__（格式不對）。請重新產生：node ai/live.js --once runs/warm-v2.json');
+        return;
+      }
+      // 監看模式的「新鮮度」看 checkpointMtime，不看產生 payload 的 at：
+      // 檔案沒動就不該假裝有進度。
+      data.$ageHint = data.running === null && data.checkpointMtime ? 'checkpoint' : 'at';
+      const sig = [data.at, data.running, data.gen].join('|');
+      D = data;
+      if (sig !== lastSig) {
+        lastSig = sig;
+        render(data);
+      } else {
+        drawStatus();
+      }
+    };
+    s.onerror = () => {
+      failCount++;
+      if (!D) showFatal('讀不到 live-data.js。這頁需要同目錄的資料檔 —— 先跑 <code>node ai/evolve.js …</code>（每代自動更新）或 <code>node ai/live.js --once runs/warm-v2.json</code>。');
+      else drawStatus();
+    };
+    document.head.appendChild(s);
+  }
+
+  function showFatal(msg) {
+    $('alerts').innerHTML = '<div class="alert">' + msg + '</div>';
+    $('headsub').textContent = '等待 ai/live-data.js …';
+    drawStatus();
+  }
+
+  /* ── 主渲染 ────────────────────────────────────────────── */
+  function render(data) {
+    D = data;
+    const modeMap = { trainer: '訓練程序即時寫入', watch: '檔案監看', snapshot: '單次快照' };
+    $('headsub').innerHTML = '來源 <code>' + esc(data.file || '—') + '</code>' +
+      '｜資料產生 ' + esc(dt(data.at)) +
+      '｜模式 ' + esc(modeMap[data.mode] || data.mode || '—') +
+      (data.checkpointMtime ? '｜checkpoint 寫入 ' + esc(dt(data.checkpointMtime)) : '');
+    drawStatus();
+    renderAlerts();
+    renderTiles();
+    renderChart();
+    renderReference();
+    renderSession();
+    renderChampion();
+    renderConfig();
+    renderAssessments();
+    renderGens();
+    renderTimeline();
+  }
+
+  function renderAlerts() {
+    const out = [];
+    const age = liveAgeSec();
+    if (D.running === true && age !== null && age > 90) {
+      out.push('<div class="warnbox">訓練狀態是「進行中」，但資料已經 <b>' + esc(agoSec(age)) +
+        '</b>沒更新。正常每代會寫一次（通常 20～60 秒）；超過 90 秒可能是存檔卡住或程序停了。' +
+        '重新整理（F5）可確認是不是快取。</div>');
+    }
+    if (D.running === null && age !== null && age > 180) {
+      out.push('<div class="warnbox">這份資料來自「檔案監看」：checkpoint 已經 <b>' + esc(agoSec(age)) +
+        '</b>沒有變動。如果訓練視窗早就關了，這個狀態就是正常的靜止；若你確定還在跑，檢查 <code>' +
+        esc(D.file) + '</code> 是否正在被另一支程序寫。</div>');
+    }
+    const cur = D.session;
+    // 「換尺」的三種來源（換考題／換對手／換算分）現在會同時發生，
+    // 所以不能再靠 if-else 挑一個講；照 reasons 組句子，缺什麼就不提。
+    const rs = cur && cur.championRescore;
+    const why = rs ? (rs.reasons || String(rs.reason || '').split('+').filter(Boolean)) : [];
+    const WHY = { exam: '換考題（地圖組）', opponent: '換對手', scoring: '換算分版本' };
+    if (cur && cur.opponentChanged) {
+      out.push('<div class="note"><b>本段換了對手</b>：' + esc(cur.opponentBefore || '（前一段的對手未記錄）') +
+        ' → ' + esc(cur.opponentRulerLabel || cur.opponentRuler || '?') +
+        '。交替演化就是這樣：對面每一輪都在變強，所以段界那一步往下掉通常是<b>尺變嚴</b>，不是這一族變笨。' +
+        (rs && why.includes('opponent') ? ' 舊冠軍已按新對手重評 ' + esc(f2(rs.before)) + ' → ' + esc(f2(rs.after)) +
+          `（${n(rs.games)} 場校準，不計訓練場數）。` : '') + '</div>');
+    }
+    if (cur && cur.examChanged) {
+      out.push('<div class="note"><b>本段換了考題</b>：' + esc(stageStr(cur.examBefore)) + ' → ' +
+        esc(stageStr(D.config.stages)) + '。換圖前後的分數不是同一把尺，圖上的紅虛線就是接縫。' +
+        (rs && why.includes('exam') ? ' 舊冠軍已在新考題重新評分 ' + esc(f2(rs.before)) +
+          ' → ' + esc(f2(rs.after)) + `（${n(rs.games)} 場校準，不計訓練場數）。` : '') +
+        '</div>');
+    } else if (rs && why.includes('scoring')) {
+      out.push('<div class="note"><b>本段換了算分版本</b>：v' + esc(rs.fromVersion ?? '?') +
+        ' → v' + esc(rs.toVersion) + '。舊冠軍重新評分 ' +
+        esc(f2(rs.before)) + ' → ' + esc(f2(rs.after)) +
+        `（${n(rs.games)} 場校準，不計訓練場數）。曲線接縫見橙虛線。</div>`);
+    }
+    // 考績是不是這隻冠軍的
+    const a = D.assessments && D.assessments[D.assessments.length - 1];
+    if (a && D.champion && a.genomeFingerprint &&
+        D.champion.fingerprint && a.genomeFingerprint !== D.champion.fingerprint) {
+      out.push('<div class="warnbox">最後一次考績的對象（<code>' + esc(a.genomeFingerprint) +
+        '</code>）不是現任冠軍（<code>' + esc(D.champion.fingerprint) +
+        '</code>）：考核之後冠軍又換人了。要看現在的實力請重跑 <code>node ai/ledger.js --verify ' +
+        esc(D.file) + '</code>。</div>');
+    }
+    $('alerts').innerHTML = out.join('');
+  }
+
+  function renderTiles() {
+    const cur = D.session;
+    const done = cur ? cur.doneGens : null;
+    const target = cur ? cur.targetGens : null;
+    const last = D.history.length ? D.history[D.history.length - 1] : null;
+    const stall = stallInfo();
+    const tiles = [
+      { k: '目前世代', v: n(D.gen), n: cur ? '本段 +' + n(done) + (target ? ' / ' + n(target) + ' 代' : ' 代') : '歷史總計', cls: '' },
+      { k: '歷史最佳（冠軍）', v: f2(D.best), n: D.bestGen ? '第 ' + n(D.bestGen) + ' 代出生' + (D.champion && D.champion.scoringVersion ? '｜算分 v' + D.champion.scoringVersion : '') : '', cls: 'gold' },
+      { k: '本代平均', v: f2(D.mean), n: last ? '第 ' + n(last.gen) + ' 代' : '', cls: 'blue' },
+      { k: '累計場數', v: n(D.episodes), n: D.perGen ? n(D.perGen) + ' 場／代' : '', cls: '' },
+      { k: '冠軍停滯', v: stall.gens + ' 代', n: '第 ' + n(stall.fromGen) + ' 代後沒換人' + (stall.resetByExam ? '（這一段換了尺，重新起算）' : ''), cls: stall.gens > 40 ? 'mid' : 'ok' },
+      { k: '種族數', v: n(D.species), n: 'speciation 後的有效物種', cls: '' },
+      { k: '冠軍網路', v: D.champion ? n(D.champion.nodes) + ' 節點' : '—', n: D.champion ? n(D.champion.enabledLinks) + ' / ' + n(D.champion.links) + ' 條邊啟用' : '', cls: '' },
+      { k: '考題', v: (D.config.stages || []).length + ' 張地圖', n: (D.config.stages || []).length + ' 圖 × ' + n(D.config.seeds) + ' 種子 × 2 座位', cls: '' },
+    ];
+    $('tiles').innerHTML = tiles.map(t =>
+      '<div class="tile ' + t.cls + '"><div class="k">' + t.k + '</div><div class="v">' + t.v +
+      '</div><div class="n">' + (t.n || '') + '</div></div>').join('');
+  }
+
+  /**
+   * 冠軍停滯幾代：從「最後一次每代最佳真的上升」算到現在。
+   * 換考題／換算分版本的接縫一定要重新起算 —— 接縫前後不是同一把尺，
+   * 把舊尺的進步算進來會讓停滯天數看起來比實際短。
+   */
+  function stallInfo() {
+    const h = D.history || [];
+    const seam = D.session && (D.session.examChanged || D.session.opponentChanged || D.session.championRescore)
+      ? D.session.fromGeneration : null;
+    let change = seam !== null && seam !== undefined ? seam
+      : (h.length ? h[0].gen : (D.gen || 0));
+    for (let i = 1; i < h.length; i++) {
+      if (Number.isFinite(h[i].best) && Number.isFinite(h[i - 1].best) &&
+          h[i].best > h[i - 1].best + 1e-9) change = h[i].gen;
+    }
+    change = Math.max(change, seam ?? change);
+    return {
+      gens: Math.max(0, (D.gen || 0) - change),
+      fromGen: change,
+      resetByExam: seam !== null && seam !== undefined && change === seam,
+    };
+  }
+
+  /* ── 收斂曲線 ──────────────────────────────────────────── */
+  function rangeData() {
+    const h = D.history || [];
+    if (rangeMode === 'all' || h.length <= 50) return h;
+    const k = Number(rangeMode) || 200;
+    return h.slice(-k);
+  }
+
+  function seamsOf() {
+    // 回傳 Map<gen, {exam:boolean, scoring:string|null, session:boolean}>
+    const m = new Map();
+    const sessions = D.sessions || [];
+    let prevScoring = null;
+    for (const s of sessions) {
+      const gen = s.fromGeneration;
+      if (gen === null || gen === undefined) { if (s.scoringVersion) prevScoring = s.scoringVersion; continue; }
+      if (!m.has(gen)) m.set(gen, { exam: false, scoring: null, session: false, ruler: false });
+      const e = m.get(gen);
+      if (gen > 0) e.session = true;
+      if (s.examChanged) e.exam = true;
+      if (s.opponentChanged) e.ruler = true;
+      if (s.scoringVersion != null && prevScoring != null && s.scoringVersion !== prevScoring)
+        e.scoring = 'v' + prevScoring + '→v' + s.scoringVersion;
+      if (s.scoringVersion != null) prevScoring = s.scoringVersion;
+    }
+    return m;
+  }
+
+  /* 固定參考尺（ai/live.js 的 reference）：每代拿同一批冠軍去打的兩把「不參與選擇」的尺。
+     rule ＝ 遊戲內建規則 AI（最軟的基準）；ref ＝ 用 --ref 凍結的對手機，內容永不改。
+     曲線跟活對手的分數一起跳，多半是換尺；只有這兩條同向移動才是真的變強／變弱。 */
+  const REF_COLORS = ['#5ad19a', '#a371f7'];
+
+  function refSeries() {
+    const R = D && D.reference;
+    if (!R || !Array.isArray(R.rulers) || !R.rulers.length) return [];
+    const byGen = new Map();
+    for (const h of R.history || []) byGen.set(h.gen, h.scores || {});
+    if (R.latest) byGen.set(R.latest.gen, R.latest.scores || {});
+    return R.rulers.map((r, i) => ({
+      key: r.key, label: r.label, color: REF_COLORS[i % REF_COLORS.length],
+      // 回傳 NaN 而不是 0：缺資料的那一代要讓折線斷掉，不能畫成「零分」。
+      pick: p => {
+        const m = byGen.get(p.gen);
+        const v = m && m[r.key];
+        return Number.isFinite(v) ? v : NaN;
+      },
+    }));
+  }
+
+  function renderReference() {
+    const R = D && D.reference;
+    const box = $('refBody');
+    const note = $('refNote');
+    const legend = $('refLegend');
+    if (!box) return;
+    if (!R || !Array.isArray(R.rulers) || !R.rulers.length) {
+      legend.innerHTML = '';
+      note.textContent = '';
+      return;
+    }
+    const latest = R.latest || null;
+    const rows = R.rulers.map((r, i) => {
+      const v = latest && latest.scores ? latest.scores[r.key] : null;
+      const series = refSeries()[i] || { pick: () => NaN };
+      const pts = (D.history || []).map(p => series.pick(p)).filter(Number.isFinite);
+      const first = pts.length ? pts[0] : null;
+      const peak = pts.length ? Math.max(...pts) : null;
+      return '<tr>' +
+        '<td class="l"><i class="sw" style="border-color:' + REF_COLORS[i % REF_COLORS.length] + '"></i>' +
+          esc(r.label) + '</td>' +
+        '<td class="' + (Number.isFinite(v) && v > 0 ? 'gold' : 'dim') + '">' + (Number.isFinite(v) ? f2(v) : '—') + '</td>' +
+        '<td class="dim">' + (Number.isFinite(first) ? f2(first) : '—') + '</td>' +
+        '<td class="dim">' + (Number.isFinite(peak) ? f2(peak) : '—') + '</td>' +
+        '<td class="dim">' + n(pts.length) + '</td>' +
+        '</tr>';
+    }).join('');
+    note.textContent = latest
+      ? '最近一次：第 ' + n(latest.gen) + ' 代・' + n(R.games || 0) + ' 場（地圖 ' +
+        esc((R.maps || []).join(',')) + '）・算分 v' + esc(String(R.scoringVersion ?? '—'))
+      : '還沒有查得到最近一次的成績';
+    legend.innerHTML = R.rulers.map((r, i) =>
+      '<span><i style="border-color:' + REF_COLORS[i % REF_COLORS.length] + '" class="dash"></i>' +
+      esc(shortRuler(r)) + '</span>').join('');
+    box.innerHTML = '<table><thead><tr><th class="l">尺（不參與選擇）</th><th>最近</th><th>本段第一次</th>' +
+      '<th>最高</th><th>有資料的世代</th></tr></thead><tbody>' + rows + '</tbody></table>' +
+      '<div class="sub" style="padding:8px 2px 4px">' + esc(R.note ||
+        '這兩把尺都不進適應度：曲線跳動但它們不動＝換尺，不是變強。') + '</div>';
+  }
+
+  /** 圖例要短：完整名稱留在下方表格與滑鼠提示裡。 */
+  function shortRuler(r) {
+    const k = String(r.key || '');
+    if (k === 'rule') return '規則 AI';
+    if (k.startsWith('ref:')) return '凍結快照';
+    return r.label || k;
+  }
+
+  function renderChart() {
+    const cv = $('chart');
+    const wrap = cv.parentElement;
+    const W = Math.max(320, wrap.clientWidth);
+    const H = 340;
+    const dpr = window.devicePixelRatio || 1;
+    cv.width = Math.round(W * dpr);
+    cv.height = Math.round(H * dpr);
+    cv.style.height = H + 'px';
+    const ctx = cv.getContext('2d');
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    ctx.clearRect(0, 0, W, H);
+
+    const all = D.history || [];
+    $('chartNote').textContent = all.length
+      ? '（' + n(all.length) + ' 筆，顯示 ' + (rangeMode === 'all' ? '全部' : '最近 ' + rangeMode + ' 代') + '）'
+      : '';
+    const data = rangeData();
+    chartData = data;
+    if (!data.length) {
+      ctx.fillStyle = '#8b98a9'; ctx.font = '16px "Segoe UI","Microsoft JhengHei",sans-serif';
+      ctx.fillText('還沒有世代紀錄。', 20, 40);
+      return;
+    }
+
+    // 座標標籤 16px（使用者規則：最小文字 > 16px）→ 左留白要容得「-100」這種負數、
+    // 下留白要容得一整行代數。
+    const PAD = { l: 68, r: 18, t: 22, b: 40 };
+    const g0 = data[0].gen, g1 = data[data.length - 1].gen;
+    const span = Math.max(1, g1 - g0);
+    let maxY = 0, minY = 0;
+    const REF = refSeries();     // 固定參考尺：畫在同一個 y 軸上才看得出「換尺」跟「變強」的差
+    for (const p of data) {
+      if (Number.isFinite(p.best)) maxY = Math.max(maxY, p.best);
+      if (Number.isFinite(p.mean)) maxY = Math.max(maxY, p.mean);
+      if (Number.isFinite(p.mean)) minY = Math.min(minY, p.mean);
+      for (const r of REF) { const v = r.pick(p); if (Number.isFinite(v)) maxY = Math.max(maxY, v); }
+    }
+    if (Number.isFinite(D.best)) maxY = Math.max(maxY, D.best);
+    maxY = Math.max(maxY, 10);
+    const step = niceStep(maxY / 4);
+    let y0 = Math.floor(Math.min(0, minY) / step) * step;
+    let y1 = Math.ceil(maxY / step) * step;
+    if (y1 <= y0) y1 = y0 + step;
+
+    const X = g => PAD.l + ((g - g0) / span) * (W - PAD.l - PAD.r);
+    const Y = v => H - PAD.b - ((v - y0) / (y1 - y0)) * (H - PAD.t - PAD.b);
+
+    // 背景與網格
+    ctx.fillStyle = '#0f141b';
+    ctx.fillRect(PAD.l, PAD.t, W - PAD.l - PAD.r, H - PAD.t - PAD.b);
+    ctx.strokeStyle = '#222a36';
+    ctx.fillStyle = '#8b98a9';
+    ctx.font = '16px "Segoe UI","Microsoft JhengHei",sans-serif';
+    ctx.lineWidth = 1;
+    for (let v = y0; v <= y1 + step * 0.001; v += step) {
+      const y = Math.round(Y(v)) + 0.5;
+      ctx.beginPath(); ctx.moveTo(PAD.l, y); ctx.lineTo(W - PAD.r, y); ctx.stroke();
+      ctx.textAlign = 'right'; ctx.textBaseline = 'middle';
+      ctx.fillText(fmtTick(v, step), PAD.l - 8, y);
+    }
+    // x 軸
+    // 16px 的代數標籤比較寬，刻度少一點才不會互相壓到
+    const gStep = niceStep(span / 4);
+    const gt0 = Math.ceil(g0 / gStep) * gStep;
+    ctx.textAlign = 'center'; ctx.textBaseline = 'top';
+    for (let g = gt0; g <= g1 + gStep * 0.001; g += gStep) {
+      const x = Math.round(X(g)) + 0.5;
+      ctx.strokeStyle = '#1b2230';
+      ctx.beginPath(); ctx.moveTo(x, PAD.t); ctx.lineTo(x, H - PAD.b); ctx.stroke();
+      ctx.fillStyle = '#8b98a9';
+      ctx.fillText(String(g), x, H - PAD.b + 8);
+    }
+
+    // 接縫
+    const seams = seamsOf();
+    // 標籤先收集、再挑著畫：交替演化每段一把新尺，812 代看全部時有三十多條「換對手」
+    // 接縫，間距不到 40px；16px 的字硬排會糊成一團（字級不能再降，那是使用者的規則）。
+    // 所以：虛線全畫（位置不能丟），文字用「佔位 greedy」—— 重要的（換圖／算分）先挑位置，
+    // 「換對手」只填剩下的空檔；放不下的就不寫字，滑鼠移到那個世代看提示。
+    const labels = [];
+    for (const [gen, s] of seams) {
+      if (gen < g0 || gen > g1) continue;
+      const label = [s.exam ? '換圖' : '', s.ruler ? '換對手' : '',
+        s.scoring ? '算分 ' + s.scoring : ''].filter(Boolean).join(' · ');
+      if (!label) continue;
+      labels.push({
+        gen, label,
+        color: s.exam ? '#ffb3ae' : s.ruler ? '#f2a9df' : '#f0c48a',
+        prio: s.exam || s.scoring ? 0 : 1,     // 0＝重要，先佔位
+        rulerOnly: s.ruler && !s.exam && !s.scoring,
+        w: 0,
+      });
+    }
+    ctx.font = '16px "Segoe UI","Microsoft JhengHei",sans-serif';
+    for (const L of labels) L.w = ctx.measureText(L.label).width;
+
+    // 「換對手」只標代表：交替演化每段都換一次對手，3,000 代看全部時有四十多條接縫，
+    // 每條都寫字就變成一牆「換對手換對手…」把曲線壓住 —— 2026-11-02 用無頭 Chrome
+    // 截圖才看出來（之前的驗證只到「腳本跑完不拋錯」，沒真的看過長相）。
+    // 所以按世代順序 evenly 挑幾條寫字，其餘的虛線照樣畫（淡一號），位置不丟：
+    // 滑鼠移到那個世代上，提示照樣寫「這一代換了對手」。
+    const plotW = W - PAD.l - PAD.r;
+    const rulerLabels = labels.filter(L => L.rulerOnly).sort((a, b) => a.gen - b.gen);
+    const allowed = Math.max(2, Math.floor(plotW / 240));
+    let hiddenRuler = 0;
+    if (rulerLabels.length > allowed) {
+      const keep = new Set();
+      for (let i = 0; i < allowed; i++)
+        keep.add(rulerLabels[Math.round(i * (rulerLabels.length - 1) / (allowed - 1))]);
+      hiddenRuler = rulerLabels.length - keep.size;
+      for (let i = labels.length - 1; i >= 0; i--)
+        if (labels[i].rulerOnly && !keep.has(labels[i])) labels.splice(i, 1);
+      $('chartNote').textContent += '，另有 ' + n(hiddenRuler) + ' 條「換對手」接縫太密未標字';
+    }
+
+    // 佔位表：寫過字的地方用矩形記下來，之後每個標籤都要避開。
+    // （一開始用「每一層寫到哪裡」的單調前沿，但冠軍標籤在右上角＝右邊被佔、
+    //   左邊還空著，前沿模型表達不出來，結果「冠軍 75.6」跟「算分 v7→v8」疊在一起。）
+    const boxes = [];
+    const LH = 18;
+    const fits = (x, y, w) => x >= PAD.l && x + w <= W - PAD.r && y >= 2 && y + LH <= H - PAD.b &&
+      !boxes.some(b => x < b.x + b.w && b.x < x + w && y < b.y + b.h && b.y < y + LH);
+    const take = (x, y, w) => { boxes.push({ x: x - 7, y: y - 2, w: w + 14, h: LH + 4 }); return { x, y }; };
+
+    // 冠軍標籤先卡位：那條線是整張圖的天花板，不能被接縫蓋掉。
+    let champ = null;
+    if (Number.isFinite(D.best)) {
+      const t = '冠軍 ' + f2(D.best);
+      const w = ctx.measureText(t).width;
+      const ly = Y(D.best);
+      if (ly >= PAD.t && ly <= H - PAD.b) {
+        const x = W - PAD.r - 4 - w;
+        const y = [ly - 3 - LH, ly + 4, ly - 3 - LH * 2, ly + 4 + LH].find(v => fits(x, v, w));
+        champ = { t, w, ...(y === undefined ? { x, y: ly - 3 - LH } : take(x, y, w)) };
+      }
+    }
+
+    labels.sort((a, b) => a.prio - b.prio || a.gen - b.gen);
+    const half = (g0 + g1) / 2;
+    for (const L of labels) {
+      // 兩個候選：靠右的接縫往左寫、靠左的往右寫，才不會寫出繪圖區
+      const cand = (half < L.gen ? [X(L.gen) - 4 - L.w, X(L.gen) + 4]
+        : [X(L.gen) + 4, X(L.gen) - 4 - L.w]).filter(x => x >= PAD.l && x + L.w <= W - PAD.r);
+      for (let row = 0; row < 4 && L.x === undefined; row++) {
+        const y = PAD.t + 2 + row * LH;
+        const x = cand.find(v => fits(v, y, L.w));
+        if (x !== undefined) Object.assign(L, take(x, y, L.w));
+      }
+    }
+    for (const [gen, s] of seams) {
+      if (gen < g0 || gen > g1) continue;
+      const x = Math.round(X(gen)) + 0.5;
+      const rulerOnly = s.ruler && !s.exam && !s.scoring;
+      const dim = rulerOnly && hiddenRuler > 0;
+      // 換對手用桃紅，不用紫：紫是「凍結快照」那條參考線的顏色（REF_COLORS），
+      // 兩件事共用一個顏色時，圖上分不清哪條是「尺」、哪條是「換尺」。
+      const color = s.exam ? '#f85149' : s.scoring ? '#d29922' : s.ruler ? '#e075c8' : '#5a6678';
+      ctx.save();
+      if (dim) ctx.globalAlpha = 0.32;
+      ctx.setLineDash(s.session && !rulerOnly && !s.exam && !s.scoring ? [2, 4] : dim ? [2, 7] : [6, 4]);
+      ctx.strokeStyle = color;
+      ctx.lineWidth = s.exam || s.scoring || s.ruler ? 1.6 : 1;
+      ctx.beginPath(); ctx.moveTo(x, PAD.t); ctx.lineTo(x, H - PAD.b); ctx.stroke();
+      ctx.restore();
+    }
+    for (const L of labels) {
+      if (L.x === undefined) continue;
+      ctx.save();
+      ctx.fillStyle = L.color;
+      ctx.font = '16px "Segoe UI","Microsoft JhengHei",sans-serif';
+      ctx.textAlign = 'left'; ctx.textBaseline = 'top';
+      // 接縫標籤一定會壓在曲線上（圖沒那麼多空白的地盤），描一圈底色當光環再填色
+      ctx.lineJoin = 'round'; ctx.lineWidth = 4; ctx.strokeStyle = 'rgba(13,17,23,.92)';
+      ctx.strokeText(L.label, L.x, L.y);
+      ctx.fillText(L.label, L.x, L.y);
+      ctx.restore();
+    }
+
+    // 冠軍水平線（標籤的位置在上面先卡好了；字要等曲線畫完再蓋，否則會被橘線壓住）
+    if (Number.isFinite(D.best)) {
+      const y = Y(D.best);
+      if (y >= PAD.t && y <= H - PAD.b) {
+        ctx.save();
+        ctx.setLineDash([4, 4]); ctx.strokeStyle = 'rgba(63,185,80,.75)'; ctx.lineWidth = 1;
+        ctx.beginPath(); ctx.moveTo(PAD.l, y); ctx.lineTo(W - PAD.r, y); ctx.stroke();
+        ctx.restore();
+      }
+    }
+
+    // 固定參考尺（先畫在最底層）：同一批個體拿去打「軟基準」與「凍結的對手機」。
+    // 這兩條都不進適應度，所以活對手的曲線跳了一格而它們沒動＝那是換尺不是變強。
+    for (const r of REF) {
+      ctx.save();
+      ctx.setLineDash([5, 4]);
+      drawSeries(ctx, data, r.pick, X, Y, r.color, 1.4);
+      ctx.restore();
+    }
+    // 平均（先畫，當背景資訊）
+    drawSeries(ctx, data, p => p.mean, X, Y, '#4c9ff5', 1.6);
+    // 最佳
+    drawSeries(ctx, data, p => p.best, X, Y, '#f0c48a', 2.2);
+    if (champ) {
+      ctx.save();
+      ctx.fillStyle = '#8fd0a0'; ctx.font = '16px "Segoe UI","Microsoft JhengHei",sans-serif';
+      ctx.textAlign = 'left'; ctx.textBaseline = 'top';
+      // 底下一層半透明底色：標籤難免會壓到曲線，墊一下才讀得出數字
+      ctx.fillStyle = 'rgba(15,20,27,.8)';
+      ctx.fillRect(champ.x - 3, champ.y - 2, champ.w + 6, LH + 2);
+      ctx.fillStyle = '#8fd0a0';
+      ctx.fillText(champ.t, champ.x, champ.y);
+      ctx.restore();
+    }
+
+    // hover 十字線
+    if (hoverIndex >= 0 && hoverIndex < data.length) {
+      const p = data[hoverIndex];
+      const x = Math.round(X(p.gen)) + 0.5;
+      ctx.save();
+      ctx.strokeStyle = '#6b7788'; ctx.setLineDash([3, 3]); ctx.lineWidth = 1;
+      ctx.beginPath(); ctx.moveTo(x, PAD.t); ctx.lineTo(x, H - PAD.b); ctx.stroke();
+      ctx.restore();
+      for (const [v, c] of [[p.mean, '#4c9ff5'], [p.best, '#f0c48a']]) {
+        if (!Number.isFinite(v)) continue;
+        ctx.beginPath(); ctx.arc(X(p.gen), Y(v), 3.2, 0, Math.PI * 2);
+        ctx.fillStyle = c; ctx.fill();
+      }
+      for (const r of REF) {
+        const v = r.pick(p);
+        if (!Number.isFinite(v)) continue;
+        ctx.beginPath(); ctx.arc(X(p.gen), Y(v), 2.6, 0, Math.PI * 2);
+        ctx.fillStyle = r.color; ctx.fill();
+      }
+    }
+
+    // 邊框
+    ctx.strokeStyle = '#2a3140';
+    ctx.strokeRect(PAD.l + 0.5, PAD.t + 0.5, W - PAD.l - PAD.r - 1, H - PAD.t - PAD.b - 1);
+
+    drawChartTip(data, X, PAD, W, H);
+  }
+
+  function drawSeries(ctx, data, pick, X, Y, color, width) {
+    ctx.save();
+    ctx.strokeStyle = color; ctx.lineWidth = width; ctx.lineJoin = 'round'; ctx.lineCap = 'round';
+    ctx.beginPath();
+    let started = false;
+    for (const p of data) {
+      const v = pick(p);
+      if (!Number.isFinite(v)) { started = false; continue; }
+      const x = X(p.gen), y = Y(v);
+      if (!started) { ctx.moveTo(x, y); started = true; } else ctx.lineTo(x, y);
+    }
+    ctx.stroke();
+    ctx.restore();
+  }
+
+  function niceStep(raw) {
+    if (!Number.isFinite(raw) || raw <= 0) return 1;
+    const p = Math.pow(10, Math.floor(Math.log10(raw)));
+    const m = raw / p;
+    return (m <= 1 ? 1 : m <= 2 ? 2 : m <= 5 ? 5 : 10) * p;
+  }
+  function fmtTick(v, step) {
+    if (step >= 1) return String(Math.round(v));
+    return v.toFixed(1);
+  }
+
+  function drawChartTip(data, X, PAD, W, H) {
+    const tip = $('tip');
+    const cv = $('chart');
+    const move = ev => {
+      const rect = cv.getBoundingClientRect();
+      const mx = ev.clientX - rect.left;
+      if (mx < PAD.l || mx > W - PAD.r) { hoverIndex = -1; tip.style.display = 'none'; return; }
+      // 最近點
+      let best = 0, bd = Infinity;
+      for (let i = 0; i < data.length; i++) {
+        const d = Math.abs(X(data[i].gen) - mx);
+        if (d < bd) { bd = d; best = i; }
+      }
+      if (bd > 30) { hoverIndex = -1; tip.style.display = 'none'; renderChart(); return; }
+      hoverIndex = best;
+      const p = data[best];
+      // 原始分／零分率是「地板與封頂之前」的水位；參考尺是「不參與選擇的兩把固定尺」。
+      // 這三樣都只在看板顯示，歷史舊檔沒有就整段不寫，不硬塞 0。
+      const seam = seamsOf().get(p.gen);
+      const extra = [];
+      if (Number.isFinite(p.raw)) extra.push('原始分 ' + esc(f2(p.raw)));
+      if (Number.isFinite(p.zero)) extra.push('0 分占比 ' + esc(pct(p.zero)));
+      for (const r of refSeries()) {
+        const v = r.pick(p);
+        if (Number.isFinite(v)) extra.push('<span style="color:' + r.color + '">' + esc(shortRuler(r)) + ' ' + esc(f2(v)) + '</span>');
+      }
+      tip.innerHTML = '<b>第 ' + esc(n(p.gen)) + ' 代</b>　<span style="color:var(--gold)">最佳 ' + esc(f2(p.best)) +
+        '</span>　<span style="color:var(--blue)">平均 ' + esc(f2(p.mean)) + '</span>' +
+        '　<span class="muted">種族 ' + esc(n(p.species)) + '</span>' +
+        (extra.length ? '<br><span class="muted">' + extra.join('　') + '</span>' : '') +
+        (seam && (seam.exam || seam.scoring || seam.ruler)
+          ? '<br><span class="muted">' + esc([seam.exam ? '換考題' : '', seam.scoring ? '算分 ' + seam.scoring : '',
+            seam.ruler ? '換對手' : ''].filter(Boolean).join(' · ')) + '</span>' : '');
+      tip.style.display = 'block';
+      const tw = tip.offsetWidth, th = tip.offsetHeight;
+      let left = X(p.gen) + 12;
+      if (left + tw > W - 4) left = X(p.gen) - tw - 12;
+      tip.style.left = Math.max(4, left) + 'px';
+      const yv = Number.isFinite(p.best) ? p.best : p.mean;
+      tip.style.top = Math.max(4, Math.min(rect.height - th - 4, clientYToLocal(ev, cv) - th - 12)) + 'px';
+      renderChart();
+    };
+    cv.onmousemove = move;
+    cv.onmouseleave = () => { hoverIndex = -1; tip.style.display = 'none'; renderChart(); };
+  }
+  function clientYToLocal(ev, cv) {
+    return ev.clientY - cv.getBoundingClientRect().top;
+  }
+
+  /* ── 本段進度 ──────────────────────────────────────────── */
+  function renderSession() {
+    const s = D.session;
+    const box = $('sessionBody');
+    if (!s) { box.innerHTML = '<div class="empty">這份存檔沒有工作階段資料（可能是舊檔）。</div>'; return; }
+    const srcMap = { resume: '接續既有存檔', 'seed-from': '暖啟動（模仿種子）', cold: '冷啟動（從零）', unknown: '無法判斷（推導）' };
+    const targetG = s.targetGens;
+    const targetE = s.targetEpisodes;
+    const pg = targetG ? Math.min(100, 100 * s.doneGens / targetG) : (targetE ? Math.min(100, 100 * s.doneEpisodes / targetE) : null);
+    const elapsed = s.elapsedSec;
+    let eta = null;
+    if (targetG && s.doneGens > 0 && elapsed) eta = (targetG - s.doneGens) * elapsed / s.doneGens;
+    else if (targetE && s.doneEpisodes > 0 && elapsed) eta = (targetE - s.doneEpisodes) * elapsed / s.doneEpisodes;
+    const running = D.running === true;
+    const stateText = running ? '進行中'
+      : D.running === false ? '本段已結束'
+      : '未知（檔案監看）';
+    const speed = (elapsed && s.doneGens > 0) ? elapsed / s.doneGens : null;
+    box.innerHTML =
+      '<div class="rowline"><div><span class="tag c">第 ' + esc(n(s.index)) + ' 段</span>' +
+        '<span class="tag">' + esc(srcMap[s.source] || s.source || '—') + '</span>' +
+        (s.scoringVersion ? '<span class="tag p">算分 v' + esc(s.scoringVersion) + '</span>' : '') +
+      '</div><div class="muted">' + esc(dt(s.startedAt)) + ' 開始</div></div>' +
+      (s.from ? '<div class="sub" style="margin-top:4px">來源：<code>' + esc(s.from) + '</code></div>' : '') +
+      '<div style="margin-top:12px" class="rowline"><div><span class="big">' + n(s.doneGens) +
+        '</span> <span class="muted">/ ' + (targetG ? n(targetG) : '—') + ' 代</span></div>' +
+        '<div class="muted">' + n(s.doneEpisodes) + ' 場' + (targetE ? ' / ' + n(targetE) : '') + '</div></div>' +
+      (pg === null ? '' : '<div class="bar"><i style="width:' + pg.toFixed(1) + '%"></i></div>') +
+      '<div class="kv">' +
+        '<div class="it"><div class="k">本段耗時</div><div class="v">' + esc(dur(elapsed)) + '</div></div>' +
+        '<div class="it"><div class="k">速度</div><div class="v">' + (speed ? esc(f1(speed)) + ' 秒／代' : '—') + '</div></div>' +
+        '<div class="it"><div class="k">' + (running ? '預估還要' : '狀態') + '</div><div class="v">' +
+          (running ? (eta !== null ? esc(dur(eta)) : '—') : esc(stateText)) + '</div></div>' +
+        '<div class="it"><div class="k">本段最佳／平均</div><div class="v">' +
+          '<span style="color:var(--gold)">' + esc(f2(s.best)) + '</span> / ' +
+          '<span style="color:var(--blue)">' + esc(f2(s.mean)) + '</span></div></div>' +
+      '</div>' +
+      (s.championRescore ? '<div class="sub" style="margin-top:10px">本段開頭校準：舊冠軍 ' +
+        esc(f2(s.championRescore.before)) + ' → ' + esc(f2(s.championRescore.after)) +
+        '（' + n(s.championRescore.games) + ' 場，不計入訓練場數；' +
+        esc((s.championRescore.reasons || String(s.championRescore.reason || '').split('+').filter(Boolean))
+          .map(x => ({ exam: '換考題', opponent: '換對手', scoring: '換算分' })[x] || x).join('＋')) + '）</div>' : '');
+  }
+
+  function renderChampion() {
+    const c = D.champion;
+    const box = $('championBody');
+    if (!c) { box.innerHTML = '<div class="empty">還沒有冠軍：第一代還沒跑完。</div>'; return; }
+    const scoreTag = c.scoringVersion != null ? '<span class="tag p">算分 v' + esc(c.scoringVersion) + '</span>' : '';
+    box.innerHTML =
+      '<div class="rowline"><div><span class="big" style="color:var(--gold)">' + esc(f2(c.fitness)) + '</span>' +
+        scoreTag + '</div><div class="muted">第 ' + n(c.generation) + ' 代出生</div></div>' +
+      '<div class="sub" style="margin-top:4px">指紋 <code>' + esc(c.fingerprint || '—') + '</code>' +
+        (c.rescoredAt ? '｜重評於 ' + esc(dt(c.rescoredAt)) : '') +
+        // 沒有這行，「冠軍 91.6」跟「本代 best 30」會被放在一起比較，
+        // 但前者可能是打規則 AI、後者是打對面訓練過的冠軍 —— 兩把尺。
+        (c.measuredAgainst ? '｜這一分打的是：' + esc(c.measuredAgainst) : '') + '</div>' +
+      '<div class="kv">' +
+        '<div class="it"><div class="k">網路</div><div class="v">' + n(c.nodes) + ' 節點／' + n(c.links) + ' 邊</div></div>' +
+        '<div class="it"><div class="k">啟用邊</div><div class="v">' + n(c.enabledLinks) + ' 條</div></div>' +
+        '<div class="it"><div class="k">訓練履歷</div><div class="v">' + n((D.sessions || []).length) + ' 段 · ' + n(D.episodes) + ' 場</div></div>' +
+        '<div class="it"><div class="k">現任世代</div><div class="v">第 ' + n(D.gen) + ' 代</div></div>' +
+      '</div>' +
+      '<div class="sub" style="margin-top:10px">' +
+        (D.sessions && D.sessions.length
+          ? '完整訓練次數與評判標準：<a href="ledger.html">ai/ledger.html</a>'
+          : '這份存檔沒有逐段訓練紀錄，履歷會標成「推導」。') +
+      '</div>';
+  }
+
+  function renderConfig() {
+    const cfg = D.config || {};
+    const per = D.perGen;
+    const oppMap = { rule: '規則 AI（rule）', random: '隨機（random）', best: '歷代冠軍（best）' };
+    const items = [
+      ['考題地圖', stageStr(cfg.stages) + (cfg.stages && cfg.stages.length ? '（' + cfg.stages.length + ' 張）' : '')],
+      ['每代場數', per ? n(per) + ' 場' : '—'],
+      ['種子／地圖', n(cfg.seeds)],
+      ['對手', oppMap[cfg.opponent] || cfg.opponent || '—'],
+      // 交替演化時「對手」是會動的：這個欄位寫的是這一段實際打的那一隻（含代數與指紋）。
+      ['這一段打誰', cfg.opponentRulerLabel || (cfg.vs ? '對面冠軍 ' + cfg.vs : oppMap[cfg.opponent] || '規則 AI（rule）')],
+      ['族群大小', n(cfg.pop)],
+      ['單局上限', cfg.maxFrames ? n(cfg.maxFrames) + ' 幀' : '—'],
+      ['算分版本', 'v' + (D.scoringVersion ?? '—')],
+      ['觀測規格', D.obsSpec ? 'v' + D.obsSpec.version + '／' + n(D.obsSpec.dim) + ' 欄' : '—'],
+      ['暖啟動種子', cfg.seedFrom ? cfg.seedFrom : '（無）'],
+      ['收斂紀錄', n((D.history || []).length) + ' 代'],
+    ];
+    $('configBody').innerHTML = '<div class="kv">' + items.map(([k, v]) =>
+      '<div class="it"><div class="k">' + esc(k) + '</div><div class="v">' + esc(v) + '</div></div>').join('') + '</div>';
+  }
+
+  function renderAssessments() {
+    const list = (D.assessments || []).slice().reverse();
+    const box = $('assessBody');
+    if (!list.length) {
+      box.innerHTML = '<div class="empty">還沒有實戰考績。跑 <code>node ai/ledger.js --verify ' +
+        esc(D.file || 'runs/warm-v2.json') + '</code> 會用未參與訓練的種子打 2 座位 × N 局，結果寫回存檔。</div>';
+      return;
+    }
+    const rows = list.map(a => {
+      const current = D.champion && a.genomeFingerprint === D.champion.fingerprint;
+      return '<tr>' +
+        '<td class="l">' + esc(dt(a.at)) + (current ? '<span class="tag g">現任</span>' : '<span class="tag">舊冠軍</span>') + '</td>' +
+        '<td class="l">' + esc(stageStr(a.stages)) + ' × ' + n(a.gamesPerSeat) + '</td>' +
+        '<td class="' + (a.winRate >= 0.5 ? 'good' : 'bad') + '">' + esc(pct(a.winRate)) + '</td>' +
+        '<td class="' + (a.controlShare >= 0.5 ? 'good' : 'mid') + '">' + esc(pct(a.controlShare)) + '</td>' +
+        '<td class="' + (a.blockedShare > 0.3 ? 'bad' : '') + '">' + esc(pct(a.blockedShare)) + '</td>' +
+        '<td>' + n(a.kills) + '</td>' +
+        '<td>' + n(a.games) + '</td>' +
+        '<td class="dim">' + esc(a.genomeFingerprint || '—') + '</td>' +
+        '</tr>';
+    }).join('');
+    box.innerHTML = '<div class="scroll"><table><thead><tr>' +
+      '<th class="l">時間</th><th class="l">考題</th><th>勝率</th><th>控制權</th><th>卡牆</th>' +
+      '<th>擊殺</th><th>場數</th><th>指紋</th></tr></thead><tbody>' + rows + '</tbody></table></div>' +
+      '<div class="sub" style="margin-top:8px">勝率＝只在本模型該坐的席位上算（v6 起單座位；防守打藍席很爛不叫缺點，那場考的不是它）；' +
+      '控制權＝網路自己決策的幀占比（其餘由規則 AI 代步）；卡牆＝在場幀中卡住的占比。</div>';
+  }
+
+  function seamSet() {
+    // gen → 接縫標籤。換圖、換算分、換對手都是「換了一把尺」，
+    // 少了「換對手」這一種，交替演化的每一段開頭都會被讀成突然變笨。
+    const m = new Map();
+    for (const ss of D.sessions || []) {
+      if (ss.fromGeneration == null) continue;
+      const tags = [];
+      if (ss.examChanged) tags.push('換圖');
+      if (ss.opponentChanged) tags.push('換對手');
+      if (tags.length) m.set(ss.fromGeneration, tags.join('·'));
+    }
+    return m;
+  }
+
+  function renderGens() {
+    const h = D.history || [];
+    const box = $('gensBody');
+    if (!h.length) { box.innerHTML = '<div class="empty">尚無世代紀錄。</div>'; return; }
+    const seams = seamSet();
+    const rows = [];
+    const start = Math.max(0, h.length - 24);
+    for (let i = h.length - 1; i >= start; i--) {
+      const p = h[i];
+      const prev = i > 0 ? h[i - 1] : null;
+      const d = prev && Number.isFinite(prev.mean) && Number.isFinite(p.mean) ? p.mean - prev.mean : null;
+      const isChampGen = D.bestGen === p.gen;
+      rows.push('<tr>' +
+        '<td class="l">' + n(p.gen) + (seams.has(p.gen) ? '<span class="tag r">' + esc(seams.get(p.gen)) + '</span>' : '') +
+        (isChampGen ? '<span class="tag p">冠軍</span>' : '') + '</td>' +
+        '<td class="gold">' + esc(f2(p.best)) + '</td>' +
+        '<td style="color:var(--blue)">' + esc(f2(p.mean)) + '</td>' +
+        '<td class="' + (d === null ? 'dim' : d > 0 ? 'good' : d < 0 ? 'bad' : 'dim') + '">' +
+          (d === null ? '—' : (d > 0 ? '+' : '') + f2(d)) + '</td>' +
+        '<td class="dim">' + (Number.isFinite(p.raw) ? f2(p.raw) : '—') + '</td>' +
+        '<td class="' + (Number.isFinite(p.zero) && p.zero > 0.5 ? 'bad' : Number.isFinite(p.zero) ? '' : 'dim') + '">' +
+          (Number.isFinite(p.zero) ? pct(p.zero) : '—') + '</td>' +
+        '<td class="dim">' + n(p.species) + '</td></tr>');
+    }
+    box.innerHTML = '<table><thead><tr><th class="l">世代</th><th>最佳</th><th>平均</th><th>Δ平均</th>' +
+      '<th>原始分</th><th>0 分占比</th><th>種族</th></tr></thead><tbody>' +
+      rows.join('') + '</tbody></table>' +
+      '<div class="sub" style="padding:8px 2px 4px">最佳線在冠軍未被突破時會貼齊冠軍（菁英保留），所以 Δ平均 才看得出族群整體有沒有在學。<br>' +
+      '原始分＝本代個體「封頂之前」的平均加總，用來看還沒被地板壓住的水位；0 分占比＝這一代有多少個體最後拿到 0 分' +
+      '（多半是整局躺平，或自家老鷹被自己打爆那一類地板規則歸零，不是算分算錯）。兩欄從算分 v10 起才記，舊世代顯示 —。</div>';
+  }
+
+  function renderTimeline() {
+    const list = (D.sessions || []).slice().reverse();
+    const box = $('timelineBody');
+    if (!list.length) {
+      box.innerHTML = '<div class="empty">這份存檔沒有逐段紀錄（舊檔）。訓練履歷會把它標成「推導」。</div>';
+      return;
+    }
+    const srcMap = { resume: '續練', 'seed-from': '暖啟動', cold: '冷啟動', unknown: '推導' };
+    const rows = list.map(s => {
+      const note = [];
+      if (s.examChanged) note.push('<span class="tag r">換圖</span>');
+      if (s.opponentChanged)
+        note.push('<span class="tag p" title="' + esc(s.opponentBefore || '?') + ' → ' +
+          esc(s.opponentRulerLabel || s.opponentRuler || '?') + '">換對手</span>');
+      if (s.championRescore) note.push('<span class="tag p">重評 ' + esc(f2(s.championRescore.after)) + '</span>');
+      return '<tr>' +
+        '<td class="l">' + n(s.index) + '</td>' +
+        '<td class="dim">' + esc(dt(s.startedAt)) + '</td>' +
+        '<td class="dim">' + esc(srcMap[s.source] || s.source || '—') + '</td>' +
+        '<td>' + (s.generations == null ? '—' : n(s.generations)) + '</td>' +
+        '<td>' + (s.episodes == null ? '—' : n(s.episodes)) + '</td>' +
+        '<td class="dim">' + esc(dur(s.elapsedSec)) + '</td>' +
+        '<td class="gold">' + esc(f2(s.best)) + '</td>' +
+        '<td class="dim">' + (s.scoringVersion != null ? 'v' + esc(s.scoringVersion) : '—') + '</td>' +
+        '<td class="l">' + (note.join(' ') || '—') + '</td></tr>';
+    }).join('');
+    box.innerHTML = '<table><thead><tr><th class="l">段</th><th class="l">開始</th><th class="l">來源</th>' +
+      '<th>代數</th><th>場數</th><th>耗時</th><th>最佳</th><th>算分</th><th class="l">備註</th></tr></thead><tbody>' +
+      rows + '</tbody></table>';
+  }
+
+  /* ── 更新節奏 ──────────────────────────────────────────── */
+  function tickAge() {
+    if (!D) return;
+    drawStatus();
+    $('hbeat').textContent = '自動重讀：每 3 秒' +
+      (lastLoadAt ? '｜上次 ' + agoSec((Date.now() - lastLoadAt) / 1000) : '');
+  }
+
+  $('rangeChips').addEventListener('click', ev => {
+    const b = ev.target.closest('button[data-range]');
+    if (!b) return;
+    rangeMode = b.getAttribute('data-range');
+    for (const c of $('rangeChips').querySelectorAll('button')) c.classList.toggle('on', c === b);
+    if (D) renderChart();
+  });
+
+  window.addEventListener('resize', () => { if (D) renderChart(); });
+  document.addEventListener('visibilitychange', () => { if (!document.hidden) loadLive(); });
+
+  loadLive();
+  setInterval(() => { if (!document.hidden) loadLive(); }, REFRESH_MS);
+  setInterval(tickAge, 1000);
+})();
+</script>
+<noscript><p style="padding:20px">這頁需要 JavaScript 才能讀取 live-data.js。</p></noscript>
+</body>
+</html>

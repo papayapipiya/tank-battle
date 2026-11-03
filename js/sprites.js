@@ -1,6 +1,6 @@
 /* ═══════════════════════════════════════════
    sprites.js — 開機時程序化生成所有貼圖（無圖檔）
-   每張 sprite 是獨立小 canvas，以 SPRITE_SS=2 的细节解析度繪製：
+   每張 sprite 是獨立小 canvas，以 SPRITE_SS=2 的細節解析度繪製：
      地形 cell 8→16、坦克/道具/特效 16→32、大爆炸 32→64。
    渲染時 Renderer 縮回 邏輯尺寸 繪製，1 美術像素 = 1 裝置像素。
    本檔內座標一律為「美術像素」（= 邏輯像素 × 2）。
@@ -124,6 +124,16 @@ const Sprites = (() => {
       armor2: [ARMOR_HP_COLORS[1], '#f8d0a0'],
       armor1: [ARMOR_HP_COLORS[0], '#e0e0e0'],
     };
+    // 觀戰模式：兩隊各自的可讀配色。不借用單人玩家的 p*，
+    // 否則藍隊（isPlayer=true）會被畫成玩家坦克，看不出是 AI 對戰。
+    roles.team01 = ['#4c88dc', '#bcdcf8'];
+    roles.team02 = ['#60a0e8', '#c8e4f8'];
+    roles.team03 = ['#80bcef', '#d8ecfc'];
+    roles.team04 = ['#a0d4f4', '#e8f4fc'];
+    roles.team11 = ['#dc5c48', '#f8cbb8'];
+    roles.team12 = ['#e47a60', '#f8d8c8'];
+    roles.team13 = ['#ec9880', '#f8e4d8'];
+    roles.team14 = ['#f4b8a4', '#fcf0e8'];
     for (const [role, [body, accent]] of Object.entries(roles)) {
       for (let frame = 0; frame < 2; frame++) {
         const up = make(32, 32, (g) => drawTankUp(g, body, accent, frame));

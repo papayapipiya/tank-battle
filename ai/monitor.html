@@ -1,0 +1,511 @@
+<!DOCTYPE html>
+<!-- ai/monitor.html — 訓練過程監測介面
+     ═══════════════════════════════════════════════════════════
+     這頁存在的理由（使用者的原話）：「如果只看結論這樣的訓練太爛」。
+     所以版面刻意把「結論」跟「過程」拆成兩塊：
+       · 結論 = 勝率、控制權 —— 這些好看也可能騙人
+       · 過程 = 卡牆比例、動作單調度、子彈打在哪、有沒有拆自己家 —— 這些才決定
+                 這代冠軍是不是真的會打車
+     資料由 `node ai/monitor.js` 寫進同目錄的 monitor-data.js，
+     用 <script src> 讀（file:// 開頁時 fetch() 會被瀏覽器擋掉）。
+     雙擊本檔即可，不需要伺服器。
+     ═══════════════════════════════════════════════════════════ -->
+<html lang="zh-Hant">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>坦克大戰 · 訓練過程監測</title>
+<style>
+  :root {
+    --bg: #0d1117; --panel: #161b22; --panel2: #1c2330; --line: #2a3140;
+    --fg: #e6edf3; --dim: #8b98a9; --good: #3fb950; --warn: #d29922; --bad: #f85149;
+    --blue: #4c9ff5; --red: #ff6b6b; --heat: #ff8c42;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--fg);
+    font: 16px/1.6 "Segoe UI", "PingFang TC", "Microsoft JhengHei", system-ui, sans-serif; }
+  header { padding: 18px 22px 12px; border-bottom: 1px solid var(--line); background: var(--panel); }
+  h1 { margin: 0 0 4px; font-size: 19px; }
+  h2 { margin: 0 0 12px; font-size: 16px; color: var(--fg); }
+  .sub { color: var(--dim); font-size: 16px; }
+  main { padding: 18px 22px 60px; max-width: 1400px; margin: 0 auto; }
+  section { background: var(--panel); border: 1px solid var(--line); border-radius: 10px;
+    padding: 16px 18px; margin-bottom: 18px; }
+  .row { display: flex; flex-wrap: wrap; gap: 18px; }
+  .row > * { min-width: 0; }
+  .chips { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 10px; }
+  button.chip { background: var(--panel2); color: var(--fg); border: 1px solid var(--line);
+    border-radius: 999px; padding: 5px 13px; cursor: pointer; font-size: 16px; }
+  button.chip.on { border-color: var(--blue); background: #17263a; }
+  button.chip:hover { border-color: var(--dim); }
+  /* 結論 vs 過程：兩組 tile 用不同底色，讓「哪一邊可能騙人」一眼看得出來 */
+  .band { display: grid; grid-template-columns: repeat(auto-fit, minmax(126px, 1fr)); gap: 10px; }
+  .tile { background: var(--panel2); border: 1px solid var(--line); border-radius: 8px;
+    padding: 9px 11px; }
+  .tile .k { color: var(--dim); font-size: 16px; }
+  .tile .v { font-size: 20px; font-weight: 600; margin-top: 2px; }
+  .tile .n { color: var(--dim); font-size: 16px; }
+  .tile.ok .v { color: var(--good); } .tile.mid .v { color: var(--warn); } .tile.no .v { color: var(--bad); }
+  .tag { display: inline-block; font-size: 16px; padding: 1px 8px; border-radius: 999px;
+    border: 1px solid var(--line); color: var(--dim); margin-left: 6px; }
+  .tag.c { border-color: #35507a; color: #9cc4f5; } .tag.p { border-color: #6a4a2a; color: #f0c48a; }
+  .flags { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 12px; }
+  .flag { border-left: 4px solid var(--bad); background: #241417; border-radius: 8px; padding: 10px 12px; }
+  .flag .t { font-weight: 600; } .flag .m { color: var(--fg); font-size: 16px; margin-top: 4px; }
+  .flag .w { color: var(--dim); font-size: 16px; margin-top: 4px; }
+  .flag .fix { color: #8fd0a0; font-size: 16px; margin-top: 4px; }
+  .allgreen { border-left: 4px solid var(--good); background: #14231a; border-radius: 8px; padding: 10px 12px; }
+  canvas { image-rendering: pixelated; border: 1px solid var(--line); border-radius: 6px; background: #000; }
+  .legend { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 8px; font-size: 16px; color: var(--dim); }
+  .legend i { display: inline-block; width: 11px; height: 11px; border-radius: 2px; margin-right: 4px;
+    vertical-align: -1px; }
+  table { border-collapse: collapse; width: 100%; font-size: 16px; }
+  th, td { border-bottom: 1px solid var(--line); padding: 5px 8px; text-align: right; white-space: nowrap; }
+  th:first-child, td:first-child { text-align: left; }
+  th { color: var(--dim); font-weight: 600; position: sticky; top: 0; background: var(--panel); }
+  td.bad { color: var(--bad); } td.good { color: var(--good); } td.mid { color: var(--warn); }
+  .bars { display: grid; gap: 7px; }
+  /* 名稱欄：字級降到 16px 之後固定 74px 會截斷（「歸因不明（常是擊殺敵車後一起消失）」
+     要 270px）。改內容寬：短名（上／右／射擊）就窄，長名自動撐寬、最長 250px 後折行。
+     minmax(64px, max-content) ＋ 子元素 max-width 是這一格能跟著名字長短變化的關鍵。 */
+  .bar { display: grid; grid-template-columns: minmax(64px, max-content) 1fr 62px; align-items: center; gap: 8px; font-size: 16px; }
+  .bar .track { background: #0f141b; border-radius: 4px; height: 16px; overflow: hidden; }
+  .bar .fill { height: 100%; border-radius: 4px; }
+  .bar > :first-child { max-width: 250px; }
+  .cmp { display: grid; grid-template-columns: minmax(52px, max-content) 1fr 1fr 62px 62px; align-items: center; gap: 8px; font-size: 16px; }
+  .scroll { overflow: auto; max-height: 420px; border: 1px solid var(--line); border-radius: 8px; padding: 0 6px; }
+  select { background: var(--panel2); color: var(--fg); border: 1px solid var(--line);
+    border-radius: 6px; padding: 4px 8px; font: inherit; }
+  details { margin-top: 10px; } summary { cursor: pointer; color: var(--dim); }
+  .why { color: var(--dim); font-size: 16px; margin: -4px 0 12px; }
+  .empty { padding: 40px; text-align: center; color: var(--dim); }
+  code { background: #0f141b; padding: 1px 6px; border-radius: 4px; color: #a5d6ff; }
+</style>
+</head>
+<body>
+<header>
+  <h1>坦克大戰 · 訓練過程監測<span class="sub" id="hdr"></span></h1>
+  <div class="sub" id="meta"></div>
+  <div class="chips" id="batches"></div>
+</header>
+<main id="main"></main>
+
+<script src="monitor-data.js"></script>
+<script>
+(function () {
+'use strict';
+const D = window.MONITOR_DATA;
+const main = document.getElementById('main');
+if (!D || !D.batches || !D.batches.length) {
+  main.innerHTML = '<div class="empty">還沒有資料。<br>先在專案根目錄跑 <code>node ai/monitor.js --ckpt runs/你的訓練檔.json</code>，' +
+    '它會寫出 <code>ai/monitor-data.js</code>，再重新整理本頁。</div>';
+  return;
+}
+
+const pct = v => (v * 100).toFixed(1) + '%';
+const n0 = v => Math.round(v || 0).toLocaleString('en-US');
+const f1 = v => (v || 0).toFixed(1);
+const el = (tag, cls, html) => {
+  const e = document.createElement(tag);
+  if (cls) e.className = cls;
+  if (html !== undefined) e.innerHTML = html;
+  return e;
+};
+
+// 過程指標的「健康區間」：超過就標黃/紅。閾值與 ai/telemetry.js 的紅旗同一套邏輯，
+// 這裡只是把「還沒到紅旗但已經歪掉」的灰色地帶也畫出來。
+const HEALTH = [
+  { k: 'blockedShare', label: '卡牆比例', hi: 0.08, mid: 0.20, note: '在場幀裡動不了的比例' },
+  { k: 'dominance', label: '動作單調度', hi: 0.5, mid: 0.7, note: '最常用動作佔多少', from: r => r.actionShare && Math.max(...r.actionShare) },
+  { k: 'fireShare', label: '開火幀比例', hi: 0.12, mid: 0.5, note: '每幀都在射就不是決策' },
+  { k: 'unbreakableHitShare', label: '子彈打在打不動的東西', hi: 0.15, mid:0.35, note: '鋼牆/水/樹林＝零傷害' },
+  { k: 'selfBaseShots', label: '拆自己家', hi: 0.5, mid: 0.5, int: true, note: '一出生就撞自家老鷹的子彈' },
+  { k: 'stuckTanks', label: '卡死的車', hi: 1, mid: 3, int: true, note: '整局幾乎沒離開所在格' },
+];
+
+let cur = 0;                       // 目前看的基因組索引
+
+function tile(k, v, note, cls) {
+  const t = el('div', 'tile' + (cls ? ' ' + cls : ''));
+  t.appendChild(el('div', 'k', k));
+  t.appendChild(el('div', 'v', v));
+  if (note) t.appendChild(el('div', 'n', note));
+  return t;
+}
+
+function classOf(r, spec) {
+  const raw = spec.from ? spec.from(r) : r[spec.k];
+  const v = raw || 0;
+  if (v <= spec.hi) return 'ok';
+  if (v <= spec.mid) return 'mid';
+  return 'no';
+}
+
+function heatCanvas(grid, bases, cells, color) {
+  // ⚠ 寬跟高是兩個獨立的數：9:21 之前這裡用 `N = grid.length` 同時當寬和高，
+  //   換成直立長場（18×42）就會「右邊少畫一半、下面留一大片空白」，
+  //   而熱點資料（cells）是照真實格座標進來的，會被一起擠歪。
+  const GH = grid.length, GW = grid[0].length, CS = 11;
+  const cv = el('canvas');
+  cv.width = GW * CS; cv.height = GH * CS;
+  const g = cv.getContext('2d');
+  const T = { 0: '#0b0f14', 1: '#a4553a', 2: '#9aa4ad', 3: '#2f6f9f', 4: '#2f7d4a', 5: '#bcd6e8', 6: '#d8c15a' };
+  for (let y = 0; y < GH; y++) for (let x = 0; x < GW; x++) {
+    g.fillStyle = T[grid[y][x]] || '#000';
+    g.fillRect(x * CS, y * CS, CS, CS);
+    if (grid[y][x] === 1) {                       // 磚：畫個磚縫，跟鋼牆區分開
+      g.strokeStyle = 'rgba(0,0,0,.35)'; g.beginPath();
+      g.moveTo(x * CS, y * CS + CS / 2); g.lineTo(x * CS + CS, y * CS + CS / 2); g.stroke();
+    }
+  }
+  let max = 1;
+  for (const c of cells) if (c.f > max) max = c.f;
+  for (const c of cells) {
+    const a = 0.18 + 0.72 * Math.sqrt(c.f / max);
+    g.fillStyle = color.replace('ALPHA', a.toFixed(3));
+    g.fillRect(c.x * CS, c.y * CS, CS, CS);
+  }
+  for (const b of bases || []) {                   // 老鷹：位置要蓋在熱點之上才看得見「守不守家」
+    g.strokeStyle = b.team === 0 ? '#4c9ff5' : '#ff6b6b';
+    g.lineWidth = 2;
+    // 老鷹本體是 2×2 cells（跟坦克一樣大），只畫左上那一格會看起來像「標記跑偏」
+    g.strokeRect(b.cx * CS + 1, b.cy * CS + 1, CS * 2 - 2, CS * 2 - 2);
+    g.fillStyle = '#d8c15a';
+    g.fillRect(b.cx * CS + 3, b.cy * CS + 3, CS * 2 - 6, CS * 2 - 6);
+  }
+  return cv;
+}
+
+function bars(pairs) {                            // [{name, a, b}] 兩條一組的對比條
+  const box = el('div', 'bars');
+  const max = Math.max(0.0001, ...pairs.flatMap(p => [p.a, p.b]));
+  for (const p of pairs) {
+    const r = el('div', 'cmp');
+    r.appendChild(el('div', '', p.name));
+    for (const v of [p.a, p.b]) {
+      const t = el('div', 'track');
+      const f = el('div', 'fill');
+      f.style.width = (100 * v / max).toFixed(1) + '%';
+      f.style.background = p.color;
+      t.appendChild(f); r.appendChild(t);
+    }
+    r.appendChild(el('div', 'n', pct(p.a)));
+    r.appendChild(el('div', 'n', pct(p.b)));
+    box.appendChild(r);
+  }
+  return box;
+}
+
+function singleBars(pairs) {                          // 只有一側可比的場合
+  const box = el('div', 'bars');
+  const max = Math.max(0.0001, ...pairs.map(p => p.a));
+  for (const p of pairs) {
+    const r = el('div', 'bar');
+    r.appendChild(el('div', '', p.name));
+    const t = el('div', 'track');
+    const f = el('div', 'fill');
+    f.style.width = (100 * p.a / max).toFixed(1) + '%';
+    f.style.background = p.color;
+    t.appendChild(f); r.appendChild(t);
+    r.appendChild(el('div', 'n', pct(p.a)));
+    box.appendChild(r);
+  }
+  return box;
+}
+
+function svgGrowth(growth) {
+  // 字級要守住 16px（全站最小字級規則），所以這張圖不能靠 viewBox 縮放：
+  // 縮放會把「16」變成小於 16 的實際像素。做法是把 W 設成容器實際寬度，
+  // 讓 1 使用者單位 = 1 CSS px，字級才真的等於設定的值。
+  const P = 34, H = 220;
+  const W = Math.max(360, Math.min(920, (main.clientWidth || 900) - 60));
+  const ns = 'http://www.w3.org/2000/svg';
+  const svg = document.createElementNS(ns, 'svg');
+  svg.setAttribute('viewBox', `0 0 ${W} ${H}`);
+  svg.setAttribute('width', W); svg.setAttribute('height', H);
+  svg.setAttribute('style', 'max-width:100%');
+  const txt = (x, y, col, str, anchor) => {
+    const t = document.createElementNS(ns, 'text');
+    t.setAttribute('x', x); t.setAttribute('y', y); t.setAttribute('fill', col);
+    t.setAttribute('font-size', '16'); t.setAttribute('text-anchor', anchor || 'start');
+    // 16px 的字一定壓到曲線（圖裡沒有多餘的空白可躲），所以幫它描一圈底色邊：
+    // paint-order=stroke 先畫描邊再畫字，等於自帶一圈光環，不用另外算矩形位置。
+    t.setAttribute('stroke', '#0d1117'); t.setAttribute('stroke-width', '4');
+    t.setAttribute('paint-order', 'stroke'); t.setAttribute('stroke-linejoin', 'round');
+    t.textContent = str; svg.appendChild(t);
+  };
+  if (growth.length < 2) {
+    // 拆兩行：16px 全形字一行最多約 (W-2P)/16 個，塞成一行會溢出 viewBox。
+    txt(P + 2, H / 2 - 8, '#8b98a9', '沒有演化歷史（這份是還沒進化的模仿種子）');
+    txt(P + 2, H / 2 + 20, '#8b98a9', '跑 node ai/evolve.js --seed-from … 之後才有曲線');
+    return svg;
+  }
+  const xs = i => P + (W - P * 1.4) * (i / (growth.length - 1));
+  const best = Math.max(...growth.map(g => g.best)), mean = Math.min(...growth.map(g => g.mean));
+  const lo = Math.min(mean, 0), hi = best === lo ? 1 : best;
+  const ys = v => H - P - (H - P * 1.8) * ((v - lo) / (hi - lo));
+  const axis = document.createElementNS(ns, 'path');
+  axis.setAttribute('d', `M${P},${H - P} H${W - 20} M${P},${H - P} V12`);
+  axis.setAttribute('stroke', '#2a3140'); svg.appendChild(axis);
+  const line = (key, color, fill) => {
+    const p = document.createElementNS(ns, 'polyline');
+    p.setAttribute('points', growth.map((g, i) => `${xs(i)},${ys(g[key])}`).join(' '));
+    p.setAttribute('fill', fill || 'none'); p.setAttribute('stroke', color);
+    p.setAttribute('stroke-width', key === 'best' ? 2 : 1.4);
+    svg.appendChild(p);
+  };
+  line('best', '#3fb950'); line('mean', '#4c9ff5');
+  // 三個標記都用 text-anchor 對齊端點，座標就不用跟著字級重算偏移量。
+  txt(xs(growth.length - 1) + 4, ys(best) - 8, '#3fb950', `best ${f1(best)}`, 'end');
+  txt(P + 4, ys(growth[0].best) - 8, '#8b98a9', `第 1 代 ${f1(growth[0].best)}`);
+  txt(W - 8, H - P + 18, '#8b98a9', `gen ${growth[growth.length - 1].gen}`, 'end');
+  return svg;
+}
+
+function flagCards(flags) {
+  if (!flags || !flags.length) {
+    return el('div', 'allgreen', '✓ 過程檢查全綠 —— 這一版沒有卡牆、亂掃射、拆自己家這類退化');
+  }
+  const box = el('div', 'flags');
+  for (const f of flags) {
+    box.appendChild(el('div', 'flag',
+      `<div class="t">⚑ ${f.label}</div>` +
+      `<div class="m">實測 ${f.value}（門檻 ${f.limit}）</div>` +
+      `<div class="w">為什麼要管：${f.why || ''}</div>` +
+      `<div class="fix">去改：${f.fix || ''}</div>`));
+  }
+  return box;
+}
+
+function bulletCauses(row) {
+  // 死因清單要跟 ai/telemetry.js 的 _classify() 對齊，否則網頁會把 key 直接印出來。
+  // 特別注意 unknown：子彈把敵車打死之後那台車就從 G.tanks 消失，
+  // 歸因迴環找不到人 → 這種「其實打得最準」的一類最容易被誤標成 waste。
+  const names = {
+    brick: '磚（沒削掉）', brick_destroyed: '磚（削掉了，有效）', steel: '鋼牆（打不動）',
+    water: '水（打不動）', forest: '樹林（打不動）', ice: '冰（打不動）',
+    base: '老鷹', boundary: '邊界（出界）', tank: '敵坦克', bullet: '打掉對面子彈',
+    other: '其他', unknown: '歸因不明（常是擊殺敵車後一起消失）',
+  };
+  const good = ['brick_destroyed', 'base', 'tank', 'bullet'];
+  const bd = row.bulletDeaths || {};
+  const keys = Object.keys(bd).sort((a, b) => bd[b] - bd[a]);
+  const box = el('div', 'bars');
+  const max = Math.max(1, ...keys.map(k => bd[k]));
+  for (const k of keys) {
+    const r = el('div', 'bar');
+    r.appendChild(el('div', '', names[k] || k));
+    const t = el('div', 'track'); const f = el('div', 'fill');
+    f.style.width = (100 * bd[k] / max).toFixed(1) + '%';
+    f.style.background = good.includes(k) ? 'var(--good)' : (k === 'unknown' || k === 'boundary' ? 'var(--dim)' : 'var(--bad)');
+    t.appendChild(f); r.appendChild(t);
+    r.appendChild(el('div', 'n', n0(bd[k])));
+    box.appendChild(r);
+  }
+  if (!keys.length) box.appendChild(el('div', 'sub', '這一版沒開槍'));
+  box.appendChild(el('div', 'sub', `共 ${n0(row.bulletDeathsN)} 發子彈落地；磚格被削掉 ${n0(row.brickDestroyed)} 格`));
+  return box;
+}
+
+function gamesTable(batch) {
+  const wrap = el('div', 'scroll');
+  const tb = el('table');
+  const cols = ['局', '座位', '種子', '勝負', '幀數', '提前結束', '卡牆', '開火幀', '子彈', '擊殺', '戰損',
+    '最長盤旋', '卡死車', '拆自己家'];
+  const head = el('tr'); cols.forEach(c => head.appendChild(el('th', '', c)));
+  tb.appendChild(head);
+  batch.games.forEach((g, i) => {
+    const p = g.policy || {};
+    const win = (g.seat === 'blue' && g.winner === 0) || (g.seat === 'red' && g.winner === 1);
+    const cls = v => v > 0.2 ? 'bad' : v > 0.08 ? 'mid' : 'good';
+    const tr = el('tr');
+    [i + 1, g.seat === 'blue' ? '藍' : '紅', '0x' + (g.seed >>> 0).toString(16),
+      win ? '✓' : '✗', n0(g.frames), g.capped ? '是' : '—',
+      pct(p.blockedShare || 0), pct(p.fireShare || 0), n0(p.shots || 0),
+      n0(p.kills || 0), n0(p.deaths || 0), n0(p.maxStay || 0), n0(p.stuckTanks || 0), n0(p.selfBaseShots || 0)]
+      .forEach((v, j) => {
+        const td = el('td', j === 3 ? (win ? 'good' : 'bad')
+          : j === 6 ? cls(p.blockedShare || 0)
+          : j === 13 && (p.selfBaseShots || 0) > 0 ? 'bad' : '');
+        td.textContent = String(v);
+        tr.appendChild(td);
+      });
+    tb.appendChild(tr);
+  });
+  wrap.appendChild(tb);
+  return wrap;
+}
+
+// ── 一整個基因組的版面 ──────────────────────────────────────
+function render() {
+  const b = D.batches[cur];
+  const p = b.policy, r = b.foe;
+  main.innerHTML = '';
+
+  document.getElementById('hdr').textContent =
+    `　產生於 ${new Date(D.generatedAt).toLocaleString('zh-TW')}`;
+  document.getElementById('meta').innerHTML =
+    `地圖 ${D.stage}｜每座位 ${D.gamesPerSeat} 局｜單局上限 ${n0(D.maxFrames)} 幀｜` +
+    `觀測 v${D.obsSpec.version}（${D.obsSpec.dim} 欄）｜紅旗 ${D.rules.length} 條`;
+  const chips = document.getElementById('batches');
+  chips.innerHTML = '';
+  D.batches.forEach((x, i) => {
+    const c = el('button', 'chip' + (i === cur ? ' on' : ''),
+      `${x.label}｜勝率 ${pct(x.conclusion.winRate)}｜${x.flagSummary === '✓ 無' ? '✓ 無紅旗' : '⚑ ' + x.flagSummary}`);
+    c.onclick = () => { cur = i; render(); };
+    chips.appendChild(c);
+  });
+
+  // 1. 結論 vs 過程
+  const concl = el('section');
+  concl.appendChild(el('h2', '', '結論面<span class="tag c">好看也可能騙人</span>'));
+  concl.appendChild(el('div', 'why',
+    '這幾項是「結果」。第 50 代冠軍曾經在這裡拿 75% 勝率、100% 控制權，' +
+    '但逐幀看是 92% 的決策在射擊、55% 的在場幀頂在牆上動不了 —— 所以結論面只留當對照。'));
+  const cb = el('div', 'band');
+  cb.appendChild(tile('勝率', pct(b.conclusion.winRate), `${b.conclusion.policyWins}/${b.conclusion.games} 局（藍紅兩座位）`, b.conclusion.winRate > 0.5 ? 'ok' : 'no'));
+  cb.appendChild(tile('網路控制權', b.conclusion.controlShare === null ? 'n/a' : pct(b.conclusion.controlShare), '其餘幀由規則 AI 代步'));
+  cb.appendChild(tile('平均幀數', n0(b.conclusion.avgFrames), `上限 ${n0(D.maxFrames)}`));
+  cb.appendChild(tile('打到上限沒結果', n0(b.conclusion.capped), '和局＝沒學會收尾', b.conclusion.capped ? 'no' : 'ok'));
+  cb.appendChild(tile(b.championGeneration ? '適應度' : '模仿忠實度',
+    b.championGeneration ? f1(b.fitness) : (b.fitness === null ? 'n/a' : pct(b.fitness)),
+    b.championGeneration ? `第 ${b.championGeneration} 代峰值` : '對規則 AI 決定的複製率'));
+  cb.appendChild(tile('演化代數 / 場數', `${n0(b.generation)} 代`, `${n0(b.episodes)} 場`));
+  concl.appendChild(cb);
+  main.appendChild(concl);
+
+  const proc = el('section');
+  proc.appendChild(el('h2', '', '過程面<span class="tag p">訓練是不是真的在變強，看這裡</span>'));
+  const pb = el('div', 'band');
+  for (const spec of HEALTH) {
+    const raw = (spec.from ? spec.from(p) : p[spec.k]) || 0;
+    pb.appendChild(tile(spec.label, spec.int ? n0(raw) : pct(raw), spec.note, classOf(p, spec)));
+  }
+  pb.appendChild(tile('推進距離', n0(p.advancePx) + ' px', '平均離自家基地最近時的推進量'));
+  pb.appendChild(tile('走過的格子', n0(p.distinctCells), '探索廣度'));
+  pb.appendChild(tile('擊殺 / 戰損', `${n0(p.kills)} / ${n0(p.deaths)}`, '交換比', p.kills >= p.deaths ? 'ok' : 'mid'));
+  proc.appendChild(pb);
+  main.appendChild(proc);
+
+  // 2. 紅旗
+  const fl = el('section');
+  fl.appendChild(el('h2', '', '紅旗'));
+  fl.appendChild(flagCards(p.flags));
+  main.appendChild(fl);
+
+  // 3. 熱點地圖 + 逐局選擇
+  const map = el('section');
+  map.appendChild(el('h2', '', '車都擠在哪（熱點 × 地形）'));
+  map.appendChild(el('div', 'why',
+    '每一格 = 這一隊所有坦克在這一格停留的幀數。圖畫不出「為什麼卡住」，但能看出卡的地點有沒有道理：' +
+    '堵在自家老鷹前面是防守，抵在邊角鋼牆前就是死鎖。'));
+  const ctrl = el('div', 'chips');
+  const sel = el('select');
+  sel.appendChild(el('option', '', '全部累積（跨座位）'));
+  b.games.forEach((g, i) => sel.appendChild(el('option', '', `第 ${i + 1} 局（${g.seat === 'blue' ? '藍座' : '紅座'}）`)));
+  const roleSel = el('select');
+  roleSel.appendChild(el('option', '', '訓練網路'));
+  roleSel.appendChild(el('option', '', '規則 AI（對照）'));
+  ctrl.appendChild(sel); ctrl.appendChild(roleSel);
+  map.appendChild(ctrl);
+  const holder = el('div'); holder.style.marginTop = '12px';
+  map.appendChild(holder);
+  const legend = el('div', 'legend');
+  legend.innerHTML = [['#a4553a', '磚'], ['#9aa4ad', '鋼'], ['#2f6f9f', '水'], ['#2f7d4a', '樹林'],
+    ['#bcd6e8', '冰'], ['#d8c15a', '老鷹'], ['var(--heat)', '停留幀數']]
+    .map(([c, t]) => `<span><i style="background:${c}"></i>${t}</span>`).join('');
+  map.appendChild(legend);
+  function drawMap() {
+    const useAll = sel.selectedIndex === 0;
+    const isPolicy = roleSel.selectedIndex === 0;
+    let grid, bases, cells, who;
+    if (useAll) {
+      grid = (b.map && b.map.grid) || (b.games[0] && b.games[0].grid);
+      bases = (b.map && b.map.bases) || (b.games[0] && b.games[0].bases);
+      cells = (isPolicy ? p : r).heatCells || [];
+      who = isPolicy ? '訓練網路（全部座位累積）' : '規則 AI（全部座位累積）';
+    } else {
+      const g = b.games[sel.selectedIndex - 1];
+      grid = g.grid; bases = g.bases;
+      cells = ((isPolicy ? g.policy : g.foe) || {}).heatCells || [];
+      who = (isPolicy ? '訓練網路' : '規則 AI') + `（第 ${sel.selectedIndex} 局，${g.seat === 'blue' ? '藍座' : '紅座'}）`;
+    }
+    holder.innerHTML = '';
+    if (!grid) { holder.appendChild(el('div', 'sub', '這份資料沒有地形快照 —— 重跑 node ai/monitor.js 即可補上')); return; }
+    holder.appendChild(el('div', 'sub', who));
+    holder.appendChild(heatCanvas(grid, bases, cells,
+      isPolicy ? 'rgba(255,140,66,ALPHA)' : 'rgba(76,159,245,ALPHA)'));
+  }
+  sel.onchange = drawMap; roleSel.onchange = drawMap;
+  drawMap();
+  main.appendChild(map);
+
+  // 4. 動作分佈 + 子彈去向
+  const act = el('section');
+  act.appendChild(el('h2', '', '五個動作的使用分佈'));
+  act.appendChild(el('div', 'why',
+    '左條 = 訓練網路，右條 = 同場的規則 AI。比例長期壓在單一動作上（例如射擊 90%）' +
+    '代表網路退化成「站著開槍」，即使勝率還在上升也不等於會打車。'));
+  const names = (p.actionNames || ['上', '右', '下', '左', '射擊']);
+  const pa = p.actionShare || [];
+  // 規則 AI 那側沒有「網路輸出」可統計（actN=0 → actionShare 是 null），
+  // 硬畫會得到一排 0%，看起來像它一動不動。這種情況只畫網路自己。
+  const hasFoe = !!(r && r.actionShare);
+  const rows = names.map((nm, i) => ({ name: nm, a: pa[i] || 0, b: hasFoe ? r.actionShare[i] : 0, color: 'var(--heat)' }));
+  act.appendChild(hasFoe ? bars(rows) : singleBars(rows));
+  if (!hasFoe) act.appendChild(el('div', 'sub',
+    `右側沒畫規則 AI 的動作分佈 —— 它的動作是 if/else 挑出來的，不經網路輸出，` +
+    `沒有「argmax 佔比」這種東西可比。過程面要盯的是它自己的卡牆 ${pct((r && r.blockedShare) || 0)} 與開火幀 ${pct((r && r.fireShare) || 0)}。`));
+  main.appendChild(act);
+
+  const bul = el('section');
+  bul.appendChild(el('h2', '', '子彈都打在哪'));
+  bul.appendChild(el('div', 'why', '「打不動的東西」那一欄就是零傷害彈量：射得多不代表打得著。'));
+  const two = el('div', 'row');
+  const c1 = el('div'); c1.appendChild(el('div', 'sub', `訓練網路（${n0(p.shots)} 發）`)); c1.appendChild(bulletCauses(p));
+  const c2 = el('div'); if (r) { c2.appendChild(el('div', 'sub', `規則 AI（${n0(r.shots)} 發）`)); c2.appendChild(bulletCauses(r)); }
+  two.appendChild(c1); two.appendChild(c2);
+  bul.appendChild(two);
+  main.appendChild(bul);
+
+  // 5. 成長曲線
+  const gr = el('section');
+  gr.appendChild(el('h2', '', '成長曲線（適應度 vs 代數）'));
+  gr.appendChild(el('div', 'why',
+    '綠線 best、藍線 mean。只有 best 上升、mean 躺平 = 偶爾撿到一個怪招；' +
+    'mean 跟著抬才是整族群變強。曲線平在一個高點同時紅旗亮著 = 該改適應度而不是多跑幾代。'));
+  gr.appendChild(svgGrowth(b.growth || []));
+  if (r) gr.appendChild(el('div', 'sub', `對照：同批對局裡規則 AI 的卡牆 ${pct(r.blockedShare || 0)}、` +
+    `開火幀 ${pct(r.fireShare || 0)}、子彈 ${n0(r.shots)} 發 —— 網路贏不過這三個數字的變化，就還算不上學會開車。`));
+  main.appendChild(gr);
+
+  // 6. 逐局
+  const gm = el('section');
+  gm.appendChild(el('h2', '', '逐局過程數據'));
+  gm.appendChild(gamesTable(b));
+  main.appendChild(gm);
+
+  // 7. 定義
+  const ref = el('section');
+  ref.appendChild(el('h2', '', '紅旗規則與適應度權重（定義）'));
+  const dt = el('details'); dt.appendChild(el('summary', '', `展開：${D.rules.length} 條紅旗、${Object.keys(D.weights).length} 項適應度權重`));
+  const inner = el('div', 'row');
+  const t1 = el('div'); t1.appendChild(el('div', 'sub', '紅旗'));
+  const tb1 = el('table'); tb1.appendChild(el('tr', '', '<th>規則</th><th>門檻</th>'));
+  for (const rl of D.rules) tb1.appendChild(el('tr', '', `<td style="text-align:left">${rl.label}</td><td>${rl.limit}</td>`));
+  t1.appendChild(tb1);
+  const t2 = el('div'); t2.appendChild(el('div', 'sub', '適應度權重'));
+  const tb2 = el('table'); tb2.appendChild(el('tr', '', '<th>項目</th><th>權重</th>'));
+  for (const [k, v] of Object.entries(D.weights)) tb2.appendChild(el('tr', '', `<td style="text-align:left">${k}</td><td>${v}</td>`));
+  t2.appendChild(tb2);
+  inner.appendChild(t1); inner.appendChild(t2);
+  dt.appendChild(inner);
+  ref.appendChild(dt);
+  main.appendChild(ref);
+}
+
+render();
+})();
+</script>
+</body>
+</html>

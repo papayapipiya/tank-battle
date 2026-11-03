@@ -1,19 +1,23 @@
 /* ═══════════════════════════════════════════
    renderer.js — Canvas 渲染 + DOM HUD
-   邏輯座標（208×208）→ ctx.scale(SCALE) 放大顯示。
+   邏輯座標（144×336，9:21 直立）→ ctx.scale(SCALE) 放大顯示。
    貼圖原生尺寸為 邏輯 × SPRITE_SS，故縮到 s.width/SPRITE_SS 繪製；
    位置先對齊裝置像素格，避免 2× 細節被重採樣變糊。
+
+   ⚠ 寬與高是分開的兩個數（FIELD_W/FIELD_H、GRID_W/GRID_H）。
+     位圖是 288×672；「放大」由 css 的 #gameCanvas 做，只放大不縮小。
    ═══════════════════════════════════════════ */
 
 const Renderer = (() => {
   let canvas, ctx;
   let explosions = [];   // { x, y, timer, big }
   let popups = [];       // { x, y, text, timer }
+  let demoView = false;  // 觀戰模式：坦克改採隊伍配色
 
   function init(canvasEl) {
     canvas = canvasEl;
-    canvas.width = FIELD_PX * SCALE;
-    canvas.height = FIELD_PX * SCALE;
+    canvas.width = FIELD_W * SCALE;
+    canvas.height = FIELD_H * SCALE;
     ctx = canvas.getContext('2d');
     ctx.imageSmoothingEnabled = false;
   }
@@ -30,7 +34,7 @@ const Renderer = (() => {
   function clear() {
     ctx.setTransform(SCALE, 0, 0, SCALE, 0, 0);
     ctx.fillStyle = '#000';
-    ctx.fillRect(0, 0, FIELD_PX, FIELD_PX);
+    ctx.fillRect(0, 0, FIELD_W, FIELD_H);
   }
 
   function drawSprite(name, x, y) {
@@ -60,8 +64,8 @@ const Renderer = (() => {
   // ── 地形（森林除外，最後蓋上）──
   function drawMap(map, frame) {
     const waterFrame = (frame >> 4) % 2;
-    for (let cy = 0; cy < GRID; cy++) {
-      for (let cx = 0; cx < GRID; cx++) {
+    for (let cy = 0; cy < GRID_H; cy++) {
+      for (let cx = 0; cx < GRID_W; cx++) {
         const v = map.cells[cy][cx];
         const x = cx * CELL, y = cy * CELL;
         switch (v) {
@@ -81,14 +85,16 @@ const Renderer = (() => {
   }
 
   function drawForestOverlay(map) {
-    for (let cy = 0; cy < GRID; cy++)
-      for (let cx = 0; cx < GRID; cx++)
+    for (let cy = 0; cy < GRID_H; cy++)
+      for (let cx = 0; cx < GRID_W; cx++)
         if (map.cells[cy][cx] === CELL_TYPE.FOREST)
           drawSprite('forest', cx * CELL, cy * CELL);
   }
 
   // ── 坦克 ──
   function tankRole(tank) {
+    // 觀戰模式：依隊伍著色（火力等級 = 顏色深淺），兩隊一眼可分辨
+    if (demoView) return `team${tank.team}${tank.firepower}`;
     if (tank.isPlayer) return `p${tank.firepower}`;
     switch (tank.enemyType) {
       case ENEMY_TYPE.FAST:  return 'fast';
@@ -146,7 +152,10 @@ const Renderer = (() => {
       drawSprite(name, e.x - size / 2, e.y - size / 2);
     }
     ctx.textAlign = 'center';
-    ctx.font = 'bold 8px "Courier New", monospace';
+    // ⚠ 畫布上的字級是「邏輯 px」，實際到螢幕要乘 SCALE（=2）。
+    //   使用者的規則「最小文字 > 16px」換到這裡就是邏輯 9px 起跳，
+    //   所以傷害數字（原本 8px = 剛好 16 CSS）一律 10px＝20 CSS。
+    ctx.font = 'bold 10px "Courier New", monospace';
     for (const p of popups) {
       ctx.fillStyle = '#f8e058';
       ctx.fillText(p.text, p.x, p.y - (45 - p.timer) * 0.3);
@@ -161,21 +170,40 @@ const Renderer = (() => {
   }
 
   // ── 全螢幕覆蓋層 ──
+  // 9:21 的場只有 144 邏輯 px 寬（以前是 208），同一個字級一行少約 10 個字。
+  // 所以這裡用 measureText 保底：太長的字先「壓小到 9px（＝18 CSS，使用者
+  // 規則是最低 16px，這是地板）」，仍放不下就保持 9px 讓它居中——
+  // 呼叫端（js/game.js）的字串仍以「不超過 22 個半形字元」為準。
   function overlay(lines, opts = {}) {
     ctx.fillStyle = `rgba(0,0,0,${opts.dim ?? 0.65})`;
-    ctx.fillRect(0, 0, FIELD_PX, FIELD_PX);
+    ctx.fillRect(0, 0, FIELD_W, FIELD_H);
     ctx.textAlign = 'center';
-    let y = FIELD_PX / 2 - (lines.length - 1) * 12 + (opts.dy || 0);
+    let y = FIELD_H / 2 - (lines.length - 1) * 12 + (opts.dy || 0);
+    const maxW = FIELD_W - 6;
     for (const line of lines) {
       ctx.fillStyle = line.color || '#fff';
-      ctx.font = `${line.bold ? 'bold ' : ''}${line.size || 10}px "Courier New", monospace`;
-      ctx.fillText(line.text, FIELD_PX / 2, y);
+      // 下限 9 邏輯 px（＝18 CSS px @SCALE 2）：呼叫端偶爾會寫成 8、6 那種
+      // 「縮在角落的說明字」，在 20px 的標題旁邊會直接讀不到。
+      // 使用者規則：最小文字 > 16px —— 守在這一層，以後新增覆蓋層不會再跌破。
+      let size = Math.max(9, line.size || 10);
+      const setFont = px => {
+        ctx.font = `${line.bold ? 'bold ' : ''}${px}px "Courier New", monospace`;
+      };
+      // 無頭環境（ai/engine.js）的 ctx 是什麼都不回的 proxy，measureText()
+      // 回來是 undefined；讀 .width 會炸整條 bundle。量不到 ⇒ 不縮。
+      const widthNow = () => {
+        const m = ctx.measureText ? ctx.measureText(line.text) : null;
+        return m && typeof m.width === 'number' ? m.width : maxW;
+      };
+      setFont(size);
+      while (size > 9 && widthNow() > maxW) { size--; setFont(size); }
+      ctx.fillText(line.text, FIELD_W / 2, y);
       y += line.gap ?? 16;
     }
   }
 
   return {
-    init, clear, clearFx,
+    init, clear, clearFx, setDemo: v => { demoView = !!v; },
     drawMap, drawForestOverlay, drawTank, drawBullet, drawPowerUp,
     drawFx, tickFx, overlay,
     spawnExplosion, spawnPopup,

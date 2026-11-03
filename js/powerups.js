@@ -5,14 +5,14 @@
 class PowerUp {
   /** @param tileX,tileY 16px tile 座標 */
   constructor(tileX, tileY, type) {
-    this.x = tileX * 16;
-    this.y = tileY * 16;
+    this.x = tileX * TILE_PX;
+    this.y = tileY * TILE_PX;
     this.type = type;
     this.alive = true;
     this.timer = T.POWERUP_BLINK;
   }
 
-  get box() { return { x: this.x, y: this.y, w: 16, h: 16 }; }
+  get box() { return { x: this.x, y: this.y, w: TILE_PX, h: TILE_PX }; }
 
   update() {
     if (--this.timer <= 0) this.alive = false;
@@ -36,10 +36,12 @@ class PowerUp {
   }
 
   /** 在隨機空 tile 生成。找不到回傳 null。 */
+  // 9:21 之後寬高不同，所以迴圈上限是 TILE_H（列）／TILE_W（行），
+  // 兩個數寫反不會報錯，只會「道具永遠不出現在下半部」這種怪事。
   static spawnRandom(map) {
     const spots = [];
-    for (let r = 0; r < 13; r++) {
-      for (let c = 0; c < 13; c++) {
+    for (let r = 0; r < TILE_H; r++) {
+      for (let c = 0; c < TILE_W; c++) {
         let empty = true;
         for (let dy = 0; dy < 2 && empty; dy++)
           for (let dx = 0; dx < 2 && empty; dx++)

@@ -32,29 +32,50 @@ body {
   /* auto 外邊距取代 body 的 align-items:center：
      空間不足時退回左對齊，避免面板被裁到無法捲動的負座標 */
   margin-inline: auto;
+  /* 字放大之後兩欄加畫布約 1080px；視窗更窄時讓面板整排掉到畫布下面，
+     而不是把欄位切掉一半（切掉的欄位捲不動，等於沒有訓練狀態）。 */
+  flex-wrap: wrap;
+  justify-content: center;
 }
 
+/* 戰場（2026-11-01：9:21 直立 ＋「地圖放大」）
+   位圖是 288×672（邏輯 144×336 @SCALE 2），這裡只做 CSS 放大：
+     · 下限 672px = 1:1，絕不縮小。`pixelated` 的畫布被往下採樣會整行整列
+       丟像素 —— 牆會鋸齒、坦克邊緣會抖，而且 16px 的字級跟著一起變小。
+     · 上限 1344px = 整數 2×，再大就是非整數倍率、反而糊。
+     · 寬用 auto：canvas 是有內在比例的 replaced element，高度定了寬度就定，
+       比例天然跟著 9:21 走（不用寫 aspect-ratio，寫了也不會更準）。
+   視窗很矮時（例如 768px 高）會溢出 672px 的下限 → 頁面垂直捲動，
+   這是刻意的取捨：寧可捲，也不要一張糊的小圖。 */
 #gameCanvas {
   background: #000;
   border: 3px solid #444;
   image-rendering: pixelated;
   image-rendering: crisp-edges;
+  height: clamp(672px, calc(100vh - 130px), 1344px);
+  width: auto;
+  align-self: flex-start;
 }
 
-/* ── 側面板 ── */
+/* ── 側面板 ──
+   320px 是「最小字 16px／正文 17px」這套字級量出來的寬度：
+   左欄要放訓練狀態（代數＋分數＋場數＋版本＋時間）與兩隊戰況，
+   右欄要放一排一排的按鈕（「藍網路・紅規則」這種四字標籤）。
+   字級再小下去就能縮回 230px，但那時「即時還是快照」這種關鍵說明只有 9px ——
+   觀戰時讀不到，等於這一欄不存在。 */
 .panel {
-  width: 150px;
+  width: 320px;
   background: #242424;
   border: 2px solid #444;
-  padding: 10px;
+  padding: 12px;
   display: flex;
   flex-direction: column;
-  gap: 10px;
+  gap: 12px;
 }
 
 .panel-label {
-  font-size: 11px;
-  color: #888;
+  font-size: 17px;
+  color: #999;
   letter-spacing: 2px;
   margin-bottom: 4px;
 }
@@ -66,6 +87,19 @@ body {
 }
 
 .panel-value.hi { color: #f85858; }
+
+/* 訓練 A.I. 狀態列（由 js/watch.js 寫入；未啟用時是灰的）
+   pre-line：那四行是刻意用 \n 排的（快照代數／適應度／快照時間／已觀戰），
+   不然會被壓成一整行，看起來像一個無法理解的長數字。 */
+.panel-ai {
+  font-size: 17px;
+  line-height: 1.45;
+  color: #7bd88f;
+  white-space: pre-line;
+  overflow-wrap: break-word;
+}
+.panel-ai.idle { color: #6a6a6a; }
+.panel-ai.bad { color: #f85858; }
 
 .panel-divider {
   border-top: 1px solid #3a3a3a;
@@ -115,8 +149,8 @@ body {
 .controls-list {
   display: flex;
   flex-direction: column;
-  gap: 6px;
-  font-size: 11px;
+  gap: 8px;
+  font-size: 16px;
   color: #aaa;
 }
 
@@ -125,15 +159,127 @@ kbd {
   border: 1px solid #555;
   border-bottom-width: 2px;
   border-radius: 3px;
-  padding: 1px 5px;
-  font-size: 10px;
+  padding: 2px 6px;
+  font-size: 16px;
   color: #eee;
   margin-right: 2px;
 }
 
 .footer-bar {
   margin-top: 12px;
-  font-size: 10px;
+  font-size: 16px;
   color: #555;
   letter-spacing: 2px;
 }
+
+/* ═══════════ HUD 面板（js/hud.js 填這幾個區塊）═══════════
+   三件事各自成一块，靠「標題列 ＋ 間隔」分開，不是靠顏色：
+   ① 訓練狀態 ② 紅藍隊伍・倒數 ③ 滑鼠操作。
+   ⚠ 這裡所有 id 都由 hud.js 逐個寫入；改 id 要同時改那一邊。
+
+   ⚠ 字級（使用者規則：「最小文字 > 16 px」）：
+     全檔最低 16px，正文 17px，小標 18px，數字 20px 以上。
+     以前 9～12px 的「註解級」文字在 1080p 上約 3～4mm，觀戰時根本讀不到，
+     而那些行正好是「這是即時還是快照」「這隊怎麼才算贏」這種關鍵說明。
+     面板因此從 230px 寬改成 320px；要再縮字級請一併縮面板，不要只縮一边。 */
+.hud-block { display: flex; flex-direction: column; gap: 8px; }
+
+.hud-title {
+  font-size: 18px;
+  color: #f8d840;
+  letter-spacing: 1px;
+  border-bottom: 1px solid #3a3a3a;
+  padding-bottom: 4px;
+}
+
+.hud-sub { font-size: 16px; color: #8f8f8f; line-height: 1.5; }
+.hud-note { font-size: 16px; color: #787878; line-height: 1.55; }
+.hud-dim { color: #8f8f8f; font-size: 16px; }
+
+/* 「即時／快照」這一行是整個面板最重要的一句話：
+   使用者問過「這是現在正在練的，還是某一刻的照片」，答案必須自己站出來說。 */
+.hud-state { font-size: 17px; color: #7bd88f; line-height: 1.45; }
+.hud-state.stale { color: #e0a040; }
+.hud-state.off { color: #6a6a6a; }
+.hud-state.bad { color: #f85858; }
+
+.hud-grid {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 4px 10px;
+  font-size: 17px;
+}
+.hud-k { color: #999; }
+.hud-v { color: #e8e8e8; text-align: right; }
+.hud-v.hi { color: #f85858; }
+
+.hud-round { font-size: 18px; color: #fff; display: flex; justify-content: space-between; }
+
+.hud-clock { display: flex; align-items: baseline; gap: 6px; }
+.hud-clock-num { font-size: 30px; font-weight: bold; color: #fff; font-variant-numeric: tabular-nums; }
+.hud-clock-num.urgent { color: #f85858; }
+.hud-clock-unit { font-size: 16px; color: #999; }
+
+.hud-bar { height: 8px; background: #111; border: 1px solid #444; overflow: hidden; }
+.hud-bar > i { display: block; height: 100%; width: 100%; background: #7bd88f; }
+.hud-bar > i.urgent { background: #f85858; }
+
+.hud-rule { font-size: 16px; color: #8a8a8a; line-height: 1.5; }
+
+.hud-team {
+  border-left: 4px solid #333;
+  padding: 6px 8px;
+  background: #1e1e1e;
+  display: flex; flex-direction: column; gap: 4px;
+}
+.hud-team.blue { border-left-color: #58a8e8; }
+.hud-team.red { border-left-color: #e85858; }
+.hud-team-head { font-size: 18px; color: #fff; display: flex; align-items: baseline; gap: 8px; flex-wrap: wrap; }
+.hud-team.blue .hud-team-head > b { color: #58a8e8; }
+.hud-team.red .hud-team-head > b { color: #e85858; }
+.hud-role { font-size: 16px; color: #f8d840; }
+.hud-win { font-size: 16px; color: #8a8a8a; }
+.hud-team-row { font-size: 17px; color: #c8c8c8; display: flex; justify-content: space-between; gap: 8px; }
+.hud-team-row b { color: #fff; font-weight: bold; }
+
+.hud-end { font-size: 16px; color: #a8a8a8; line-height: 1.5; }
+.hud-end.own { color: #f85858; }
+
+/* 單人模式那區預設收起來：觀戰時看到「生命／火力」只會讓人以為還能開槍 */
+.hud-block.legacy { display: none; }
+.hud-block.legacy.show { display: flex; }
+
+/* ── 按鈕 ── */
+.btn-row { display: flex; flex-wrap: wrap; gap: 6px; }
+.btn {
+  font: inherit;
+  font-size: 17px;
+  color: #ddd;
+  background: #333;
+  border: 1px solid #555;
+  border-bottom-width: 2px;
+  border-radius: 3px;
+  padding: 5px 8px;
+  cursor: pointer;
+  text-decoration: none;
+  flex: 1 0 auto;
+  text-align: center;
+}
+.btn:hover { background: #3e3e3e; color: #fff; }
+.btn:active { transform: translateY(1px); border-bottom-width: 1px; }
+/* 滑鼠面板：現在用不上的按鈕要「看起來按不了」。
+   按了什麼都沒發生的按鈕，會被當成整個面板壞掉。 */
+.btn:disabled, .btn.off {
+  color: #6a6a6a; background: #262626; border-color: #3a3a3a;
+  cursor: not-allowed; text-shadow: none;
+}
+.btn:disabled:hover, .btn.off:hover { background: #262626; color: #6a6a6a; }
+.btn.wide { flex: 1 1 100%; }
+.btn.on { background: #2c4a2c; border-color: #7bd88f; color: #b8f0c4; }
+.map-row { align-items: center; }
+.map-row .btn { flex: 0 0 auto; }
+.hud-map-label { font-size: 18px; color: #fff; min-width: 34px; text-align: center; }
+/* 「/255」：地形是隨機抽的，分母要講出來，不然「地圖 137」會被讀成「137 關」 */
+.hud-map-total { font-size: 16px; color: #8f8f8f; }
+.mode-row .btn { flex: 1 1 45%; }
+.link-row .btn { background: #2a2a3a; border-color: #4a4a6a; color: #a8b8e8; }

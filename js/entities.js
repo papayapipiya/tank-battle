@@ -12,6 +12,12 @@ function boxesOverlap(a, b) {
          a.y < b.y + b.h && a.y + a.h > b.y;
 }
 
+// 轉向後至少連續走幾步才準再轉（AI 專用）。
+// 只擋「原地翻面」不夠：實測網路會在牆邊兩格之間上下/左右抽動，
+// 每幀都換方向、每幀也都有 1px 位移 —— 畫面上仍然是原地抖動。
+// 給轉向一個短暫的承諾期，車子才會真的「往一個方向開」，而不是原地鋸齒。
+const AI_DIR_COMMIT = 12;
+
 class Tank {
   /**
    * @param x,y  px（16×16 box 左上角）
@@ -48,6 +54,13 @@ class Tank {
     // AI 計時器（敵人使用）
     this.aiDirTimer = 0;
     this.aiShootTimer = 20;
+    this.aiWanted = null;            // 下一幀想轉去的方向（真的走得到才成立，見 moveAsAI）
+    this.lastMoveDir = null;         // 上一次「真的走出去」的方向（反悔偵測用）
+    this.stuckFrames = 0;            // 連續走不動的幀數（AI 換向／解卡用）
+    this.commitLeft = 0;             // 轉向後還要連續走幾步才準再轉（防原地鋸齒）
+
+    // 外部決策器（訓練／觀戰注入點）；null = 由 EnemyAI 規則驅動
+    this.controller = null;
   }
 
   get box() { return { x: this.x, y: this.y, w: TANK_PX, h: TANK_PX }; }
@@ -111,6 +124,83 @@ class Tank {
     return false;
   }
 
+  /**
+   * AI 專用：朝 dir 轉向並走一步；**這一步如果真的走不了，就把轉向撤回**。
+   * ═══════════════════════════════════════════════════════════
+   * 使用者看到的「原地旋轉」有兩種：左右翻面，和上下每幀翻面
+   * （觀戰實測同一台車原地 160 次 0→2→0→2）。成因是控制器每幀
+   * 只改 dir、tryMove 失敗也沒關係，車子的朝向就跟著控制器抖。
+   * 從行為上說，這種原地轉向不產生任何位移，也沒有戰術價值。
+   *
+   * 所以 AI 的「轉向」改成有條件成立：先照常轉＋走，若一步都走不了，
+   * 連吸附造成的座標變化一起還原。轉向必須換到位移才算數；
+   * 走不動時就維持原向，等路讓開再轉。
+   *
+   * 另外兩條防「原地磨蹭」的規則：
+   *   1. 往前走得通時，不準下一步直接原路退回（見 reverseBanned）。
+   *      想掉頭要先走一步垂直方向 —— 撤退仍做得到，只是不許抖。
+   *   2. 剛轉過向的 AI_DIR_COMMIT 步內不準再轉；這期間的轉向請求
+   *      直接當成「繼續往前」。只擋原地翻面不夠，實測網路會在牆邊
+   *      兩格之間每幀換一次垂直方向，位移雖有 1px，畫面上仍是原地鋸齒。
+   *
+   * 玩家不走這條路：單人模式貼牆轉向是正常操作，不能一起鎖掉。
+   */
+  moveAsAI(dir, map, tanks) {
+    // 也不準「走一步立刻原路退回去」：往前還走得通時，回頭路先封住。
+    // 這種一來一回在畫面上就是原地上下（或左右）磨蹭，位移為零；
+    // 真正的撤退（前面撞牆／撞車）不受限，想掉頭也可以先走一步垂直方向。
+    const back = this.reverseBanned(map, tanks);
+    if (back >= 0 && dir === back) {
+      this.stuckFrames = Math.min(99, this.stuckFrames + 1);
+      return false;
+    }
+
+    // 剛轉過向 → 先沿這個方向走完承諾期；這期間的轉向請求被吞掉，
+    // 直接繼續往前（不是站著不動），直到前面真的被擋住才準再轉。
+    let want = dir;
+    if (want !== this.dir && this.commitLeft > 0 && this.forwardOpen(map, tanks)) {
+      want = this.dir;
+    }
+
+    const px = this.x, py = this.y, pd = this.dir;
+    const moved = this.tryMove(want, map, tanks);
+    if (moved) {
+      this.lastMoveDir = this.dir;
+      this.stuckFrames = 0;
+      if (this.dir !== pd) this.commitLeft = AI_DIR_COMMIT;
+      else if (this.commitLeft > 0) this.commitLeft--;
+    } else {
+      if (want !== pd) {
+        this.x = px;
+        this.y = py;
+        this.dir = pd;
+      }
+      this.stuckFrames = Math.min(99, this.stuckFrames + 1);
+    }
+    return moved;
+  }
+
+  /** 目前朝向前方一步走得通嗎？（承諾期／回頭路判斷共用） */
+  forwardOpen(map, tanks) {
+    const v = DIR_VEC[this.dir];
+    const nx = this.x + v.dx * this.speed;
+    const ny = this.y + v.dy * this.speed;
+    return !map.tankBlocked(nx, ny) && !this._hitsAnyTank(nx, ny, tanks);
+  }
+
+  /**
+   * 現在哪個方向是「不準直接回頭」的？往前走得通時回傳反向，否則 -1。
+   * 給 moveAsAI 與 policy 的反射層共用，兩邊才不會各判一套。
+   */
+  reverseBanned(map, tanks) {
+    if (this.lastMoveDir === null) return -1;
+    const fwd = DIR_VEC[this.lastMoveDir];
+    const nx = this.x + fwd.dx * this.speed;
+    const ny = this.y + fwd.dy * this.speed;
+    if (map.tankBlocked(nx, ny) || this._hitsAnyTank(nx, ny, tanks)) return -1;
+    return (this.lastMoveDir + 2) % 4;
+  }
+
   onIce(map) {
     const c = this.center();
     return map.isIceAt(c.x, c.y);
@@ -128,7 +218,14 @@ class Tank {
     const v = DIR_VEC[this.dir];
     // 火力 L2 起提速；未升級的敵人維持原 bulletSpeed（與舊行為等價）
     const speed = this.firepower >= FIREPOWER.L2 ? 8 : this.bulletSpeed;
-    return new Bullet(c.x + v.dx * 10, c.y + v.dy * 10, this.dir, speed, this);
+    const b = new Bullet(c.x + v.dx * 10, c.y + v.dy * 10, this.dir, speed, this);
+    // 批次五（J）：把「開火那一瞬間的車心」留在子彈上。
+    // 為什麼不讓計量端在子彈消失的那一幀回推位置：子彈 8px/幀、車 2px/幀，
+    // 一顆飛到對面老鷹的槍要飛 20 幀以上，那 40px 的漂移剛好跟 56px 的
+    // 「門口」同一個等級 —— 用impact 點判「近距離拆牆」會把遠射算成貼臉。
+    // 只有老鷹牆的拆計（v11）讀這兩個欄位；遊戲規則不受影響。
+    b.fireX = c.x; b.fireY = c.y;
+    return b;
   }
 
   /** 玩家火力升級 */
@@ -176,11 +273,11 @@ class Bullet {
     this.y += v.dy * this.speed;
 
     // 界外即消
-    if (this.x < 0 || this.x >= FIELD_PX || this.y < 0 || this.y >= FIELD_PX) {
+    if (this.x < 0 || this.x >= FIELD_W || this.y < 0 || this.y >= FIELD_H) {
       this.alive = false;
       return { hit: true, baseHit: false };
     }
-    const r = map.bulletHit(this.x, this.y, this.power);
+    const r = map.bulletHit(this.x, this.y, this.power, this.owner ? this.owner.team : null);
     if (r.hit) this.alive = false;
     return r;
   }

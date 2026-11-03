@@ -1,0 +1,62 @@
+/*
+ * ci.yml — 每次 push／PR 都把三套測試跑一遍（純 Node，不需要安裝相依套件）
+ * ═══════════════════════════════════════════════════════════
+ * 專案是「無建置步驟」的：瀏覽器端的遊戲讀 <script src> 的裸 JS，訓練端是純 Node 模組，
+ * 所以這裡不需要 npm install，也不會有 lockfile —— 三個 node 指令就是全部的驗證。
+ *
+ * 三套測試各管什麼：
+ *   test-harness.js  規則層（187 條）：幾何／彈道安全／攻守分工／出兵節拍／
+ *                     近身格鬥／原地旋轉禁止，以及「位移不追車」那條已被刪掉的分支。
+ *   test-neat.js     NEAT 本身（44 條）：創新編號、物種距離、crossover 取強親、
+ *                     死分支的重啟邏輯。
+ *   test-train.js    訓練管線（294 條）：競技場計量、算分 v11 逐項、checkpoint 往返、
+ *                     --seed-from 暖啟動、--export-every 自動跟隨、紅旗指標。
+ *
+ * ⚠ 這台機器是「全新 clone」，所以沒有 runs/（.gitignore 把整個目錄排除了，
+ *   因為 checkpoint 會隨代數一直長大）。test-train.js 的暖啟動那一節需要模仿種子，
+ *   它先找 runs/seed-<席位>.json，找不到就退回版控裡的定格副本 ai/seeds/seed-<席位>.json。
+ *   種子重記之後（老師 AI 一動就會過期，見 README「種子會過期」那節）記得把新檔
+ *   覆蓋進 ai/seeds/，否则 CI 驗的是舊種子，跟本機不同檔。
+ */
+name: tests
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  node-tests:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+
+      - name: 規則層（test-harness.js）
+        run: node test-harness.js
+
+      - name: NEAT 核心（test-neat.js）
+        run: node test-neat.js
+
+      - name: 訓練管線（test-train.js）
+        run: node test-train.js
+
+      - name: 冠軍快照能解析、且席位與算分版本對得上（防「匯出寫到一半」）
+        run: |
+          node -e "
+            const fs = require('fs');
+            const { SCORING_VERSION } = require('./ai/fitness');
+            for (const role of ['attack', 'defense']) {
+              const j = JSON.parse(fs.readFileSync('ai/trained-' + role + '.json', 'utf8'));
+              if (j.kind !== 'tank-battle-genome') throw new Error(role + '：kind 不是 tank-battle-genome');
+              if (j.role !== role) throw new Error(role + '：快照席位寫成 ' + j.role);
+              if (j.scoringVersion !== SCORING_VERSION)
+                throw new Error(role + '：快照是算分 v' + j.scoringVersion + '，現行碼是 v' + SCORING_VERSION + '（換尺之後要重評再匯出）');
+              console.log(role, 'gen', j.generation, 'fitness', (j.fitness || 0).toFixed(2), 'v' + j.scoringVersion);
+            }
+          "

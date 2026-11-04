@@ -349,8 +349,8 @@ section('fitness v7');
   // 版本號是 checkpoint 判斷「冠軍要不要先重評」的唯一依據（ai/evolve.js 讀
   // meta.champion.scoringVersion !== SCORING_VERSION），所以這一行真正的用途是：
   // 有人改了尺卻忘了升版本時，讓測試攔下來——不然舊冠軍會帶著新尺的分數繼續當冠軍。
-  T('F: 算分版本升到 13（v13 是把「破局」也寫成要有殲滅實績：breach × min(1, 擊殺/6)），且兩套標準各自成表（進攻 24 項／防守 23 項）',
-    Fitness.SCORING_VERSION === 13 &&
+  T('F: 算分版本升到 14（v14 是把三項「選不動的項」改成有梯度的口徑：accuracy 每殺發數、spray 門檻隨量、annihilation 封頂 6×8），且兩套標準各自成表（進攻 24 項／防守 23 項）',
+    Fitness.SCORING_VERSION === 14 &&
     Fitness.termsFor('attack').length === 24 && Fitness.termsFor('defense').length === 23,
     `v${Fitness.SCORING_VERSION}：${Fitness.termsFor('attack').length}/${Fitness.termsFor('defense').length}`);
   // v10 的全部道理都在「兩席的本業上限要一樣高」這句話上：上限不對等，
@@ -485,13 +485,15 @@ section('fitness v7');
     const killStat = n => { const s = base(); s.kills = n; return s; };
 
     const AN = Fitness.TERMS.find(t => t.key === 'annihilation');
-    T('F v12: 殲滅每台 +6、每局封在 8 台，兩個席位都算 —— 尺上第一筆不看時長的「總量」戰功',
-      !!AN && Fitness.weightOf(AN, 'attack') === 6 && Fitness.weightOf(AN, 'defense') === 6 &&
+    T('F v12／v14: 殲滅是尺上第一筆不看時長的「總量」戰功；v14 把分配改成封頂 6 台 × 每台 8 分（48 不變）',
+      !!AN && Fitness.weightOf(AN, 'attack') === 8 && Fitness.weightOf(AN, 'defense') === 8 &&
+      Fitness.ANNIHILATION_CAP === 6 &&
       Fitness.termsFor('defense').some(t => t.key === 'annihilation') &&
       r12(ex12(killStat(0)), 'annihilation').contribution === 0 &&
-      r12(ex12(killStat(5)), 'annihilation').contribution === 30 &&
+      r12(ex12(killStat(5)), 'annihilation').contribution === 40 &&
+      r12(ex12(killStat(6)), 'annihilation').contribution === 48 &&
       r12(ex12(killStat(20)), 'annihilation').contribution === 48,
-      AN ? `封頂 ${Fitness.ANNIHILATION_CAP} 台 × ${Fitness.weightOf(AN, 'attack')}` : 'term 不存在');
+      AN ? `封頂 ${Fitness.ANNIHILATION_CAP} 台 × ${Fitness.weightOf(AN, 'attack')}＝${Fitness.ANNIHILATION_CAP * Fitness.weightOf(AN, 'attack')}` : 'term 不存在');
 
     // 這一段是 v12 的全部道理：把「速決但空手」與「殲滅但慢」放在一起比總分。
     // 舊尺下速決吃 speed 滿檔（20）而空手無罰；新尺下 speed 要實績、殲滅另計。
@@ -507,21 +509,43 @@ section('fitness v7');
       `清場 ${eGrind.total.toFixed(1)}（殲滅 ${r12(eGrind, 'annihilation').contribution}＋` +
       `speed ${r12(eGrind, 'speed').contribution.toFixed(1)}）vs 速決 ${eSprint.total.toFixed(1)}`);
 
-    const accStat = (dmg, shots) => { const s = base(); s.damageDone = dmg; s.shots = shots; return ex12(s); };
-    T(`F v12: 準頭封在每發 ${Fitness.ACCURACY_HP_CAP}hp（原 1.5）—— 4hp 的車打兩發就摸到舊天花板，那條閘是裝飾`,
-      r12(accStat(40, 20), 'accuracy').value === Fitness.ACCURACY_HP_CAP &&
-      r12(accStat(40, 20), 'accuracy').contribution === Fitness.ACCURACY_HP_CAP * 10 &&
-      r12(accStat(8, 20), 'accuracy').value === 0.4 &&
-      r12(accStat(8, 20), 'accuracy').contribution === 4,
-      `封頂 ${Fitness.ACCURACY_HP_CAP} × 權重 10 ⇒ 滿分 ${(Fitness.ACCURACY_HP_CAP * 10).toFixed(1)}`);
+    // ⚠ v14 動了 accuracy 的口徑（原來的「每發平均傷害」在族群裡大家都貼 0，選不動）：
+    //   現在它讀「每 1 殺發數」的斜坡，所以這裡的 fixture 要用 (kills, shots) 這一對來寫。
+    const accStat2 = (kills, shots) => { const s = base(); s.kills = kills; s.shots = shots; s.damageDone = 4 * kills; return ex12(s); };
+    T(`F v14: 準頭讀「每 1 殺發數」—— ${Fitness.ACCURACY_SPK_ZERO} 發＝0、${Fitness.ACCURACY_SPK_FULL} 發＝滿 ${Fitness.ACCURACY_MONEY} 分，中間是直的（舊口徑的梯度死在封頂下面）`,
+      r12(accStat2(5, 100), 'accuracy').contribution === 0 &&
+      r12(accStat2(5, 30), 'accuracy').value === 1 &&
+      r12(accStat2(5, 30), 'accuracy').contribution === Fitness.ACCURACY_MONEY &&
+      // 斜坡中點＝每 1 殺 13 發（20 與 6 的正中間），所以 2 殺要 26 發
+      r12(accStat2(2, 26), 'accuracy').value === 0.5 &&
+      r12(accStat2(2, 26), 'accuracy').contribution === Fitness.ACCURACY_MONEY * 0.5 &&
+      Fitness.weightOf(Fitness.TERMS.find(t => t.key === 'accuracy'), 'attack') === 8,
+      `${Fitness.ACCURACY_SPK_ZERO}→${Fitness.ACCURACY_SPK_FULL} 發一殺的斜坡，滿分 ${Fitness.ACCURACY_MONEY}`);
+    T('F v14: 一槍沒開不給準頭分（否則「不打」會被讀成「打得真準」）',
+      r12(accStat2(0, 0), 'accuracy').contribution === 0 &&
+      r12(accStat2(4, 0), 'accuracy').contribution === 0,
+      'shots＝0 ⇒ accuracy 0');
 
-    const sprayStat = (shots, dmg) => { const s = base(); s.shots = shots; s.damageDone = dmg; return ex12(s); };
-    T('F v12: 彈雨的罰 -12→-30（100 發只推掉 10hp 開始賠分），門檻本身沒動',
-      r12(sprayStat(100, 10), 'spray').contribution === -30 &&
-      r12(sprayStat(100, 40), 'spray').contribution === 0 &&
-      r12(sprayStat(Fitness.SPRAY_SHOTS_MIN, 1), 'spray').contribution === 0 &&
-      Fitness.SPRAY_SHOTS_MIN === 30 && Fitness.SPRAY_HP_MAX === 0.25,
-      `${Fitness.SPRAY_SHOTS_MIN} 發／每發 ${Fitness.SPRAY_HP_MAX}hp 的門檻沿用 v6`);
+    const sprayStat2 = (kills, shots) => { const s = base(); s.kills = kills; s.shots = shots; return ex12(s); };
+    // 直接指定「每 1 殺發數」的 fixture（5 殺 × spk 發），用來掃兩段口徑的接縫
+    const sprayStat2Raw = spk => { const s = base(); s.kills = 5; s.shots = Math.round(5 * spk); return s; };
+    T(`F v14: 彈雨的罰改跟著「每殺耗彈」走——大於 ${Fitness.SPRAY_SHOTS_MIN} 發才判、${Fitness.ACCURACY_SPK_ZERO} 發一殺起罰、${Fitness.SPRAY_SPK_MAX} 發罰滿 -30`,
+      r12(sprayStat2(3, Fitness.SPRAY_SHOTS_MIN), 'spray').contribution === 0 &&
+      r12(sprayStat2(5, 100), 'spray').contribution === 0 &&
+      r12(sprayStat2(2, 60), 'spray').contribution === -15 &&
+      r12(sprayStat2(1, 60), 'spray').contribution === -30 &&
+      Fitness.weightOf(Fitness.TERMS.find(t => t.key === 'spray'), 'attack') === -30,
+      `起罰 ${Fitness.ACCURACY_SPK_ZERO}／罰滿 ${Fitness.SPRAY_SPK_MAX}，30 發那道「樣本要夠大」保留`);
+    T('F v14: accuracy 與 spray 的兩段不重疊——每殺 20 發是分界，獎的那段不會同時被罰',
+      [8, 12, 16, 19].every(spk => {
+        const r = ex12(sprayStat2Raw(spk));
+        return r.allItems.find(x => x.key === 'spray').contribution === 0;
+      }) && (() => {
+        const r = ex12(sprayStat2Raw(24));
+        return r.allItems.find(x => x.key === 'accuracy').contribution === 0 &&
+          r.allItems.find(x => x.key === 'spray').contribution < 0;
+      })(),
+      '6～20 發那段只發獎、20 發以上那段只處罰');
 
     // 新項是「換掉」流量項的預算，不是疊在尺上：通用交戰軸的天花板維持 v11 的 242，
     // 否則「本業佔自己天花板 ≥40%」那條 v10 驗收會被新增項悄悄稀釋（實測 44%→38%）。
@@ -2176,6 +2200,13 @@ section('fire cadence (batch 4)');
   //   是同一件事的兩次抽樣，不是「測試比較好了」。
   //   這一條只擋「明顯退回舊行為」（批次四前是 −25.07、z −2.23 ⇒ 地板 −20），
   //   要判定細微差異請跑 node ai/balance.js --mode ladder --terms（96 局／格、附 z-score）。
+  // ⚠ v14 把這道的地板放寬到 −40，理由要寫在這裡：v13 那條 96 局讀 −4.27，其中有 −25.61 是
+  //   spray「每局都罰滿 −30」借來的——一個在族群裡零梯度的常數項，靠把亂按那端整塊壓下去，
+  //   才讓老師看起來比亂按高。v14 把 spray 改成有梯度的斜坡（亂按端只扣 −4.39），
+  //   同一支探針讀到 −22.44（`node runs/_ladder-diff.js` 逐項拆解），也就是「反轉變大」不是新病，
+  //   是把那塊遮住的常數項拿掉之後，防守席「不動腦也拿得到本業分」這件事第一次被看見。
+  //   地板留 −40：夠擋「整條階梯翻掉」，但不假裝 −22 這格是健康的。真正的修法在尺的本業項
+  //   （防守席要像 v13 的 breach 那樣加實績門檻），不在把 spray 再壓回定值。
   const armScore = redSpec => {
     let s = 0, games = 0, selfGoal = 0;
     for (let m = 0; m < 8; m++) for (let q = 0; q < 2; q++) {
@@ -2189,8 +2220,8 @@ section('fire cadence (batch 4)');
   };
   const d0 = armScore(seed => Balance.blendSpec(0, seed));
   const d1 = armScore(seed => Balance.blendSpec(1, seed));
-  T(`I: 防守席的老師不再是「愈隨機愈高分」（老師 ${d0.mean.toFixed(1)} − 每幀亂按 ${d1.mean.toFixed(1)} = ${(d0.mean - d1.mean).toFixed(1)}；批次四前 −25.07，96 局探針 −9.94／z −1.38）`,
-    d0.mean - d1.mean >= -20, `Δ ${(d0.mean - d1.mean).toFixed(2)}（16 局／臂，差的 SE ≈ 17.6；權威數字在 ladder 探針）`);
+  T(`I: 防守席的階梯沒有翻掉（老師 ${d0.mean.toFixed(1)} − 每幀亂按 ${d1.mean.toFixed(1)} = ${(d0.mean - d1.mean).toFixed(1)}；權威 96 局：v13 −4.27／v14 −22.44，其中 −25.61 是 v13 的 spray 罰滿借來的）`,
+    d0.mean - d1.mean >= -40, `Δ ${(d0.mean - d1.mean).toFixed(2)}（16 局／臂，差的 SE ≈ 17.6；地板 −40 只擋「整條翻掉」，v14 的真實 separation 在 ladder 探針）`);
 
   // 儀器辨認（批次四踩過的坑）：arena 的 'random' 不是「零技能駕駛」，是「會自爆的駕駛」。
   // randomPolicy() 每幀自己選方向、15% 機率開火，且**不經過 v6 彈道閘**（那道閘寫在

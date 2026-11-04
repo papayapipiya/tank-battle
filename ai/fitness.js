@@ -136,7 +136,7 @@
  *         · 病根在尺：killPer1k／damagePer1k 是「每 1000 在場幀」的流量計量，
  *           一局只打 9 秒的車把分子分母一起縮小，照樣坐滿天花板；
  *           而 breach(70)＋speed(20) 讓「直取老鷹」遠比「清掉場上的人」值錢，
- *           accuracy(封頂 1.5hp／發)＋spray(-12) 又幾乎不罚 19 發一殺。
+ *           accuracy(封頂 1.5hp／發)＋spray(-12) 又幾乎不罰 19 發一殺。
  *         · A1 新增 annihilation：min(8, 擊殺數) × 6 —— 尺上第一筆「總量」戰功，
  *           不隨時長打折；短局要拿滿就得真的一台一台清。
  *         · A2 speed 進攻 20→8、防守 12→3，並乘上殲滅實績 min(1, 擊殺數 / 4)：
@@ -207,33 +207,64 @@ const HALF_HP_FULL = 6;           // halfDefense（半場攔截）封頂的 hp
 const WALL_CELL_CAP = 8;          // foeWall 封頂的格數（牆共 20 格，v6 起就封在 8）
 const WALL_FAR_SHARE = 0.25;      // v11：開火點在敵鷹門口（56px）外時，每格的折算比例
 
-/* v12（激烈度）的三把尺。都是從 `node audit-intensity.js 120` 的實測長出來的：
- *   模型冠軍 9.7 秒收場／5.9 殺／19.1 發一殺｜規則 AI 25.6 秒／12.8 殺／4.2 發一殺。
+/* v12（激烈度）的尺＋v14（選得動）的兩把新尺。都是從 `node audit-intensity.js 120`
+ * 與 `node measure-termsigma.js 24` 的實測長出來的：
+ *   模型冠軍 9.5 秒收場／6.9 殺／17.2 發一殺｜規則 AI 同一組考題 31.5 秒／12.8 殺／4.2 發一殺（兩邊都是中位數）。
  * ⚠ 這幾個數會同時出現在履歷（ai/ledger.js TERMS 拆解）與測試的期望算式裡，
  *    一律從這裡取，不要在別處重打 —— 改了這裡沒改那邊，看板就跟實際計分對不上。 */
-const ANNIHILATION_CAP = 8;       // annihilation 封頂的擊殺台數（一局 20 台，8 台已是壓倒性殲滅）
+const ANNIHILATION_CAP = 6;       // v14：8→6 台（單價 6→8、總量 48 不變）—— 封頂落在族群真正住著的區間之上
 const SPEED_KILL_PROOF = 4;       // speed 要幾台擊殺才給滿（比照 DENIAL_PROOF_HP 的「實績」做法）
-const ACCURACY_HP_CAP = 0.8;      // accuracy 封頂的每發平均傷害（v11 是 1.5；4hp 的車打兩發就摸到）
-const SPRAY_SHOTS_MIN = 30;       // 開火超過這個數才考慮判成彈雨（少於它就算不準也發不了幾分）
-const SPRAY_HP_MAX = 0.25;        // 每發平均傷害低於這個數 ⇒ 這一局的槍是在灑不在打
+
+/* v14：accuracy 的口徑從「每發平均傷害」換成「每 1 殺發數」。
+ * 換掉的理由是量出來的，不是感覺：舊口徑在族群裡 σ 只有 0.39／0.36、每場發到 0.82／0.75 分
+ * （滿權重 10），因為 0.8hp/發 那道封頂要「每發推掉五分之一台車」才摸得到，而現任冠軍是 15～17 發才換一台 ——
+ * 大家都貼著 0，這一項在選擇上就不存在（v12 押在命中上的那條線實際上選不動）。
+ * 新口徑是一條穿過族群實際所在區的斜坡：ACCURACY_SPK_ZERO 發一殺 ⇒ 0 分、ACCURACY_SPK_FULL 發一殺 ⇒ 滿分，
+ * 兩端刻意包住驗收線（每 1 殺 ≤8 發）與現況（17.2 發），所以「少開一槍換一台」立刻變成可見的梯度。 */
+const ACCURACY_SPK_ZERO = 20;     // 每 1 殺 20 發 ⇒ 這一項 0 分（比現況 17.2 再差一點才歸零，免得又貼地）
+const ACCURACY_SPK_FULL = 6;      // 每 1 殺 6 發 ⇒ 滿分（驗收線 8 發之上再嚴一檔，老師是 4.2）
+const ACCURACY_MONEY = 8;         // 滿分金額：沿用 v12 的 0.8hp×權重 10＝8，改值不改頂（通用交戰軸 242 不能動）
+
+/* v14：spray 的門檻跟著「每殺耗彈」走，不再是「每場開火量」。
+ * 舊門檻（每場 >30 發且每發 <0.25hp）在現行每場 105～118 發之下早已每局踩滿（防守席 96%），
+ * 罰到頂就是常數項 —— 跟沒有這一項一樣。現在從 ACCURACY_SPK_ZERO（20 發一殺）起罰、
+ * 到 SPRAY_SPK_MAX（40 發一殺）罰滿，斜坡落在族群的右尾，所以它有梯度、而且跟 accuracy 不重疊
+ * （accuracy 管 6～20 那一段的「獎勵」，spray 管 20 以上那一段的「罰」，兩段剛好接起來、不重複收費）。 */
+const SPRAY_SHOTS_MIN = 30;       // 至少要開滿這個數才考慮判成彈雨（樣本太小不罰，v6 以來的老規矩）
+const SPRAY_SPK_MAX = 40;         // 每 1 殺 40 發 ⇒ 罰滿（-30）；起點沿用 ACCURACY_SPK_ZERO＝20
 
 /* v13（破局要殲滅實績）的那道門檻。跟上面幾把尺一樣是從實測長出來的，不是拍的：
  * `node ai/balance.js --mode matrix`（runs/balance-matrix.v12-mature2.json，兩席冠軍對打 24 局）
  * 讀到進攻席 breach ＋40.83／局、發放率 58.3%、每局擊殺只有 3.8 台、局均 573 幀＝9.6 秒。
  * 定在 6 台的理由：一隊出兵 20 台、開場 4 台，6 台是「壓倒性但還沒清場」，
- * 比 annihilation 的封頂（ANNIHILATION_CAP＝8）低一檔 —— 門檻要比封頂低，
- * 否則「拿滿 breach」變成「拿滿 annihilation」的重複收費，同一件事處兩次。
+ * ⚠ v14 起 annihilation 的封頂也收在同一格（ANNIHILATION_CAP＝6）—— 原本這裡寫的是「門檻要比封頂低，
+ *   否則拿滿 breach 變成拿滿 annihilation 的重複收費」，v14 把封頂從 8 收到 6 之後這兩條線重合了。
+ *   這是刻意的，不是漏改：驗收線要的是「每場 ≥9 殺」（每隊 4.5 殺），族群真正住在 0～6 這一段，
+ *   把兩條線對齊等於讓「打死第 6 台」同時抬滿勝負項與殲滅項（＋8＋約 11.7），重複的方向跟想要的方向一致。
+ *   若日後要拆開，動的是這裡兩個數字的相對位置，不是把 breach 的 70 降價。
  * ⚠ 這條線會同時出現在履歷（ai/ledger.js 讀 TERMS.formula）與測試的期望算式裡，一律從這裡取。 */
 const BREACH_KILL_PROOF = 6;
 
-const SCORING_VERSION = 13;
+const SCORING_VERSION = 14;
 
 /** 一句話講清楚「這一版改的是什麼」：
  *  收斂曲線上的接縫（ championRescore ／換版）要能被看懂，
  *  不然使用者只看到「v7 → v8，分數掉了一截」，不知道掉的那一截是尺變了還是車變弱了。
  *  升版時在這裡補一句，訓練履歷／考題那一段會把它印出來。 */
 const SCORING_VERSION_NOTE =
-  `v${SCORING_VERSION}＝破局要殲滅實績（批次七）：breach 從「打破就值 70」改成「打破 × min(1, 擊殺數/${BREACH_KILL_PROOF}) × 70」—— ` +
+  `v${SCORING_VERSION}＝把「選不動的項」改成有梯度的口徑（批次八 A）：尺的勝負項一個都沒動，` +
+  '改的是三項跟「激烈度驗收」直接有關、卻在族群裡退化成常數的項。' +
+  `① accuracy 從「min(${0.8}, 造成傷害／開火數) × 10」換成「每 1 殺發數 ${ACCURACY_SPK_ZERO}→0 分、${ACCURACY_SPK_FULL}→滿分」的斜坡、權重 10→8（滿分金額維持 ${ACCURACY_MONEY}）—— ` +
+  '段邊界那格實測舊口徑每場只發 0.82／0.75 分、σ 0.39／0.36、踩滿 0%：15～17 發才換一台時人人都貼著 0，' +
+  '大家都 0 的項在選擇上等於沒有項，v12 押在「命中」上的那條線實際上選不動。' +
+  `② spray 的門檻從「每場 >${SPRAY_SHOTS_MIN} 發且每發 <${0.25}hp ⇒ 罰滿」換成「每 1 殺 >${ACCURACY_SPK_ZERO} 發起罰、到 ${SPRAY_SPK_MAX} 罰滿」的斜坡（單價 -30 不變）—— ` +
+  '舊門檻在每場 105～118 發之下每局都踩滿（防守席 96%、σ 6.0），每局都罰滿的懲罰項跟沒有這一項一樣。' +
+  '兩段口徑對齊驗收線（每 1 殺 ≤8 發）：6～20 那段由 accuracy 發獎、20 以上那段由 spray 處罰，接起來但不重疊。' +
+  `③ annihilation 封頂 8→6、單價 6→8（${ANNIHILATION_CAP}×8＝48 總量不變），把「多殺一台」的邊際價值抬在族群真正住的 0～6 殺那段；` +
+  '封頂 8→12、單價 6→4 那種同額但反向的動法會讓梯度變緩，落地前先否掉。' +
+  `⚠ 這一把讓 annihilation 的封頂跟 breach 的實績門檻（${BREACH_KILL_PROOF} 台）重合了，理由記在 BREACH_KILL_PROOF 那段注記裡。` +
+  '規則端 js/ai.js 一行不動；天花板（419.80／428.93）、項數（攻 24／守 23）、通用交戰軸 242 全部逐字不變（改值不改頂）。' +
+  `v13＝破局要殲滅實績（批次七）：breach 從「打破就值 70」改成「打破 × min(1, 擊殺數/${BREACH_KILL_PROOF}) × 70」—— ` +
   'v12 給「殲滅」定價了，但沒重新定價「破局」，所以 24 局冠軍對打實測裡進攻席最大的單一項仍是 breach（＋40.83／局、發放率 58.3%、不問清了幾台），' +
   '同一格局均 573 幀＝9.6 秒：「先清人再破網」跟「繞過所有人直取老鷹」同分，尺沒在選前者。' +
   `門檻型式沿用 v12 給 speed 的那一條（min(1, 擊殺/${SPEED_KILL_PROOF})），線拉到 ${BREACH_KILL_PROOF} 台；` +
@@ -241,9 +272,9 @@ const SCORING_VERSION_NOTE =
   '⚠ 代價：現任冠軍在「只斬首」的考題上會掉分（實測每局 3.8 殺 ⇒ breach 70→約 44），' +
   '而進攻席的勝負訊號從「稀有事件」變成「稀有事件 × 實績」，排序更稀，信噪比要重新量。' +
   'v12＝激烈度（批次六）：尺上第一次有「殲滅總量」這筆錢 —— ' +
-  `新增 annihilation ＝ min(${ANNIHILATION_CAP}, 擊殺數) × 6（不隨時長打折，短局要拿滿就得一台一台清）；` +
+  '新增 annihilation ＝ min(8, 擊殺數) × 6（不隨時長打折，短局要拿滿就得一台一台清；v14 改成 6×8，總量不變）；' +
   `speed 進攻 20→8、防守 12→3，再乘殲滅實績 min(1, 擊殺數/${SPEED_KILL_PROOF})（速決不再是一張大獎）；` +
-  `accuracy 封頂 1.5hp/發→${ACCURACY_HP_CAP}hp/發（權重 5→10，總量 7.5→8）、spray -12→-30（每發 <${SPRAY_HP_MAX}hp 的彈雨開始賠分）。` +
+  'accuracy 封頂 1.5hp/發→0.8hp/發（權重 5→10，總量 7.5→8）、spray -12→-30（每發 <0.25hp 的彈雨開始賠分）—— 這兩項的口徑在 v14 又換了一次，理由見上面那段。' +
   '新項是「換掉」不是「加在上面」：killPer1k 4.5→3.0、damagePer1k 1.5→1.0，通用交戰軸的天花板維持 242，' +
   '兩席本業上限的差也壓回 ≤10（防守 speed 因此砍到 3 而非 6）。' +
   'breach(70)／foeWall／besiege／denial 那些不動，規則端 js/ai.js 這版完全沒改 —— 量到的病是「槍很兇、人不死、8 秒斬首」，' +
@@ -291,10 +322,10 @@ const W = {
   // ── 兩邊都算的戰鬥與紀律（v10：天花板統統壓到本業之下）──
   teamwork: 6,
   killPer1k: 3.0,          // v12：4.5→3.0（封頂 24/1000 幀不動 ⇒ 天花板 108→72）。理由見 annihilation
-  annihilation: 6,         // v12：每場「總共」打死幾台（封頂 8 台）—— 尺上唯一的殲滅總量
+  annihilation: 8,         // v14：6→8（封頂 8→6 台，總量 48 不變）—— 邊際價值要落在族群真正住的 0～6 殺這一段
   death: -4,
   damagePer1k: 1.0,        // v12：1.5→1.0（封頂 24 ⇒ 36→24），與 killPer1k 同一個理由
-  accuracy: 10,            // v12：5→10，但封頂從 1.5hp/發收到 0.8hp/發（總量 7.5→8，門檻變嚴）
+  accuracy: 8,             // v14：10→8，但口徑從「每發平均傷害（封頂 0.8hp）」換成「每 1 殺發數」的斜坡（總量 8 不變）
   powerup: 2,
   firepowerUp: 3,
   ownBaseCellLost: -3,
@@ -551,7 +582,7 @@ const TERMS = [
   {
     key: 'annihilation', label: '殲滅（每場打死幾台）', roles: both, weight: W.annihilation,
     formula: `min(${ANNIHILATION_CAP}, 擊殺數) × ${W.annihilation}`,
-    cap: `每局最多算 ${ANNIHILATION_CAP} 台（一隊出兵上限 20 台；8 台已是壓倒性殲滅）`,
+    cap: `每局最多算 ${ANNIHILATION_CAP} 台（v14：8→6，單價 6→8，總量仍是 48）`,
     why: 'v12 新增，補的是 killPer1k／damagePer1k 共同的洞：那兩項是「每 1000 在場幀」的流量計量，' +
       '把一局打得愈短、分子分母就一起縮小，比例照樣漂亮 —— ' +
       '實測雙冠軍對打 9.7 秒收場、每場 5.9 殺，同一份考題的規則 AI 打 25.6 秒、每場 12.8 殺，' +
@@ -563,7 +594,12 @@ const TERMS = [
       '⚠ 這一項是「換掉」不是「加在上面」：同時把 killPer1k 4.5→3.0（−36）、' +
       'damagePer1k 1.5→1.0（−12），通用交戰軸的天花板總量維持在 v11 的 242 分，' +
       '否則尺的總量會自己長出 48 分，v10 那條「本業佔天花板 ≥40%」的驗收被新增項稀釋掉，' +
-      '而那是起步平衡度的來源（ai/balance.js --mode ceiling 每一版都要重新對一次）。',
+      '而那是起步平衡度的來源（ai/balance.js --mode ceiling 每一版都要重新對一次）。' +
+      'v14 動的是同一筆預算內的分配（封頂 8→6、單價 6→8，48 不變）：`node measure-termsigma.js` 量到' +
+      '族群每隊只打 3.4 台，封在 8 時每台的邊際價只有 6 分、且離封頂很遠（踩滿率 17%）——' +
+      '把封頂收到 6（正好是 breach 的實績門檻）讓「多殺一台」在真正住著的區間值 8 分而不是 6 分。' +
+      '⚠ 先否掉一個看起來更自由的錯動法：封頂 8→12、單價 6→4（同樣 48 不變）在 0～6 殺那段把梯度**變緩**，' +
+      '等於什麼都沒換到；要抬梯度只能往封頂低於現況的方向收。',
     value: c => clamp(c.s.kills || 0, 0, ANNIHILATION_CAP),
   },
   {
@@ -588,16 +624,24 @@ const TERMS = [
     value: c => clamp(c.per1k(c.s.damageDone), 0, 24),
   },
   {
-    key: 'accuracy', label: '每發子彈的產出', roles: both, weight: W.accuracy,
-    formula: `min(${ACCURACY_HP_CAP}, 造成傷害 / 開火數) × ${W.accuracy}`,
-    cap: `每發 ${ACCURACY_HP_CAP} hp 封頂（v12：原 1.5 → ${ACCURACY_HP_CAP}；總量 7.5 → ${(ACCURACY_HP_CAP * W.accuracy).toFixed(1)}）`,
+    key: 'accuracy', label: '射擊效率（每 1 殺發數）', roles: both, weight: W.accuracy,
+    formula: `每 1 殺發數從 ${ACCURACY_SPK_ZERO}（＝0 分）到 ${ACCURACY_SPK_FULL}（＝滿分）的線性斜坡 × ${W.accuracy}`,
+    cap: `${ACCURACY_SPK_ZERO} 發以上不給分、${ACCURACY_SPK_FULL} 發以下給滿（滿分 ${ACCURACY_MONEY}，與 v12 的 0.8hp×10 同額）`,
     why: '反刷分的第一道閘：狂按射擊不會增加這一項，只會稀釋它。' +
-      'v12 把封頂從 1.5hp/發收到 ' + ACCURACY_HP_CAP + 'hp/發 —— 1.5 那個天花板是「打 4hp 的重型車、' +
-      '兩發就滿」，實測模型的 19.1 發才換一台（規則 AI 4.2 發一殺）根本碰不到它，等於這條閘是裝飾。' +
-      '0.8 的意思是「每發至少推掉五分之一台車」才算準頭好；' +
-      '同時權重 5→10 讓滿分從 7.5 抬到 ' + (ACCURACY_HP_CAP * W.accuracy).toFixed(1) + '，' +
-      '所以這一項終於有牙：準的比亂掃的明顯多拿，但拿不到本業的量級。',
-    value: c => clamp(c.s.damageDone / Math.max(1, c.s.shots), 0, ACCURACY_HP_CAP),
+      '⚠ v14 換的是**口徑**，不是單價：v12 那版寫的是「min(0.8hp, 造成傷害／開火數) × 10」，' +
+      '而 `node measure-termsigma.js 24` 在段邊界那格量到它每場只發到 0.82（藍）／0.75（紅）分、σ 0.39／0.36、踩滿率 0% —— ' +
+      '原因是 0.8hp/發那道封頂要「每發推掉五分之一台車」才摸得到，而現任冠軍 15～17 發才換一台，' +
+      '所有人都貼著 0；**大家都 0 的項在選擇上等於沒有項**（跟「大家都踩滿」同罪，v13 驗收那節記著）。' +
+      '新口徑直接讀「每 1 殺發數」：' + ACCURACY_SPK_ZERO + ' 發＝0、' + ACCURACY_SPK_FULL + ' 發＝滿，' +
+      '斜坡正好蓋住現況（17.2）與驗收線（≤8），所以「把每殺耗彈壓下來」這一次是有梯度的。' +
+      '權重 10→8 是為了守住「改值不改頂」：滿分金額維持 ' + ACCURACY_MONEY + ' 分，通用交戰軸的 242 一分不動。' +
+      '⚠ 一開槍都沒有（shots＝0）算 0 分，不能讓「不打」被當成「打得準」。',
+    value: c => {
+      const shots = c.s.shots || 0, kills = c.s.kills || 0;
+      if (shots <= 0) return 0;
+      const spk = shots / Math.max(1, kills);
+      return clamp((ACCURACY_SPK_ZERO - spk) / (ACCURACY_SPK_ZERO - ACCURACY_SPK_FULL), 0, 1);
+    },
   },
   {
     key: 'powerup', label: '撿到道具', roles: both, weight: W.powerup,
@@ -661,17 +705,25 @@ const TERMS = [
   },
   {
     key: 'spray', label: '大量無效彈', roles: both, weight: W.spray,
-    formula: `開火 >${SPRAY_SHOTS_MIN} 發且每發平均傷害 <${SPRAY_HP_MAX}（是＝1／否＝0）（× ${W.spray}）`,
-    gate: '只對「真的由網路開車」的隊伍生效',
-    why: '彈雨即使偶爾命中也不該被獎勵；這一項跟 accuracy 封頂一起把亂掃射壓住。' +
-      'v12 從 -12 加到 ' + W.spray + '：實測雙冠軍每場 112 發、19.1 發才換一台，' +
-      '在舊價下「一直按射鍵」幾乎是免费的（-12 相對 breach 的 70 只是零頭），' +
-      '而觀眾看到的「不激烈」正是這個樣子 —— 螢幕上全是子彈，場上沒人倒下。' +
-      '門檻（' + SPRAY_SHOTS_MIN + ' 發、每發 ' + SPRAY_HP_MAX + 'hp）沿用 v6 的那把尺，只有單價動過；' +
-      '30 之後它跟 monotony(-35)、wallPin(-40) 同級，屬於「行為紀律」那一层的罰，' +
-      '不會蓋掉勝負項，但足以把純灑子彈的個體壓到選不上。',
-    value: c => (c.hasPolicy && c.s.shots > SPRAY_SHOTS_MIN &&
-      c.s.damageDone / Math.max(1, c.s.shots) < SPRAY_HP_MAX ? 1 : 0),
+    formula: `開火 >${SPRAY_SHOTS_MIN} 發時，每 1 殺發數從 ${ACCURACY_SPK_ZERO}（＝不罰）到 ${SPRAY_SPK_MAX}（＝罰滿）的線性斜坡 × ${W.spray}`,
+    gate: '只對「真的由網路開車」、且開火超過 ' + SPRAY_SHOTS_MIN + ' 發的隊伍生效',
+    why: '彈雨即使偶爾命中也不該被獎勵；這一項跟 accuracy 一起把「一直按射鍵」壓住。' +
+      '⚠ v14 動的是**門檻的口徑**：舊寫法是「每場 >30 發且每發 <0.25hp ⇒ 直接罰滿」，' +
+      '而 `node measure-termsigma.js 24`（段邊界那格）量到防守席每場開火 105～118 發，' +
+      '每一局都越過 30 這道檻、每一局都踩在 −28.75／−30 的頂上（踩滿率 96%、σ 6.0）—— ' +
+      '**每局都罰滿的懲罰項跟根本沒有這一項是一樣的**，它不再挑出任何東西，只是把所有防守個體一起往下搬。' +
+      '新寫法把它接在 accuracy 那條斜坡的右邊：每 1 殺 ' + ACCURACY_SPK_ZERO + ' 發起罰、' +
+      SPRAY_SPK_MAX + ' 發罰滿（−30 單價不變，所以天花板跟 v12 同形），' +
+      '兩段接起來不重疊：6～20 發那段由 accuracy 給「獎勵」，20 發以上那段由 spray 給「罰」，' +
+      '同一局不會因為同一件事被處兩次。' +
+      '30 發那道「樣本要夠大才判」的老規矩保留（v6 以來就是它，跟 SPK 口徑不衝突）。' +
+      'v12 那一版把單價從 -12 抬到 ' + W.spray + ' 是必要的：舊價下「一直按射鍵」幾乎是免費的' +
+      '（-12 相對 breach 的 70 只是零頭），觀眾看到的「不激烈」就是螢幕上全是子彈、場上沒人倒下。',
+    value: c => {
+      if (!c.hasPolicy || !(c.s.shots > SPRAY_SHOTS_MIN)) return 0;
+      const spk = c.s.shots / Math.max(1, c.s.kills || 0);
+      return clamp((spk - ACCURACY_SPK_ZERO) / (SPRAY_SPK_MAX - ACCURACY_SPK_ZERO), 0, 1);
+    },
   },
 ];
 
@@ -820,8 +872,11 @@ module.exports = {
   // v11 拆牆的兩個尺：顯示端（ai/ledger.js、ledger.html）與測試要把算式寫成同一個數，
   // 不能在別處再打一次 8／0.25 —— 改了這裡卻沒改那邊，履歷就跟實際計分對不上。
   WALL_CELL_CAP, WALL_FAR_SHARE,
-  // v12 激烈度的五把尺，同一個理由從這裡出口（測試與看板都讀它，不各打一份）。
-  ANNIHILATION_CAP, SPEED_KILL_PROOF, ACCURACY_HP_CAP, SPRAY_SHOTS_MIN, SPRAY_HP_MAX,
+  // v12 激烈度的尺＋v14 的兩把新尺，同一個理由從這裡出口（測試與看板都讀它，不各打一份）。
+  // ⚠ v14 起 ACCURACY_HP_CAP／SPRAY_HP_MAX 這兩把「每發平均傷害」的尺已經拿掉了：
+  //   它們在族群裡各退化成「大家都 0」與「大家都踩滿」，詳見 SCORING_VERSION_NOTE 與 §5.10.7。
+  ANNIHILATION_CAP, SPEED_KILL_PROOF, SPRAY_SHOTS_MIN,
+  ACCURACY_SPK_ZERO, ACCURACY_SPK_FULL, ACCURACY_MONEY, SPRAY_SPK_MAX,
   // v13（批次七）：破局的殲滅實績門檻，同一條紀律 —— 測試與履歷都從這裡取 6。
   BREACH_KILL_PROOF,
 };

@@ -339,7 +339,7 @@
     const spec = window.AIObservation.OBS_SPEC;
 
     // 缺快照的處理要按角色講清楚，不要靜默退化成規則 AI：
-    // 「紅隊沒跑」跟单機版根本沒訓練過是兩件不同的事。
+    // 「紅隊沒跑」跟單機版根本沒訓練過是兩件不同的事。
     const missing = requiredRoles().filter(k => !snapshotCompatible(readSnapshot(k)));
     if (missing.length) {
       return fail(`缺少${missing.map(k => ROLES[k].label).join('、')}模型的快照：` +
@@ -487,8 +487,8 @@
 
   /* ── 給右欄 HUD（js/hud.js）的介面：滑鼠是「主要」操作途徑 ──────
      人類不駕駛坦克了，所以面板需要的是「換模型、換地圖、看訓練進度」，
-     不是方向鍵。這層把 watch.js 的内部狀態用函數暴露出去，
-     hud.js 不碰 ROLES/snap 這些内部物件 —— 面板壞了不會把觀戰一起帶走。 */
+     不是方向鍵。這層把 watch.js 的內部狀態用函數暴露出去，
+     hud.js 不碰 ROLES/snap 這些內部物件 —— 面板壞了不會把觀戰一起帶走。 */
   function restartAs(m) {
     mode = m || mode;
     started = false;

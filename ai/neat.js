@@ -8,7 +8,7 @@
 
    1. 創新歷史（innovation history）
       同一條 in→out 邊永遠拿到同一個 innovation 編號，
-      所以「兩代之間的同一条邊」可比；這是 crossover 能對齊、
+      所以「兩代之間的同一條邊」可比；這是 crossover 能對齊、
       物種距離有意義的前提。少了它 NEAT 就退化成一堆隨機權重的遺演算法。
    2. 分裂節點的編號也取自歷史
       hidden node id = nodeBase + (被分裂邊的創新號)，
@@ -611,7 +611,7 @@ class NEAT {
       s.representative = s.members[0];
       s.bestFitness = sp.bestFitness; s.stall = sp.stall; s.offspring = sp.offspring;
       // 次鍵也要接得回來：少了它，--resume 的第一代會把「停滯計數」建立在
-      // 一個被清零的基準上，明明還在長原始分的族群会被误判停滯而縮編。
+      // 一個被清零的基準上，明明還在長原始分的族群會被誤判停滯而縮編。
       s.bestTie = sp.bestTie || 0;
       return s;
     });

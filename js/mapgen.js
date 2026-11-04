@@ -24,7 +24,7 @@
      4. 最後回到這裡做 **tile 級 Dijkstra 開路**：
         從每一個出生 tile 出發，必須走得到「敵方要塞外側那一排」，
         走不通就沿最便宜的路徑把地磚挖空（優先挖磚，其次鋼／水）。
-        注意節點是 tile 而不是 cell：坦克是 2×2 cells，挖 1 cell 宽的
+        注意節點是 tile 而不是 cell：坦克是 2×2 cells，挖 1 cell 寬的
         隧道車根本開不過去，那種「連通了」是假的。
 
    地形代碼沿用 CELL_TYPE（constants.js），本檔在 bundle 內，直接引用。

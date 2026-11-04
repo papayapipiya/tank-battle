@@ -443,7 +443,7 @@ const tests = `
     G.map.bases[TEAM.BLUE].cy === BASE_CELL_Y && G.map.bases[TEAM.RED].cy === 0 &&
     G.map.bases[TEAM.BLUE].cx === BASE_CELL_X && G.map.bases[TEAM.RED].cx === BASE_CELL_X,
     G.map.bases.map(b => b.cx + ',' + b.cy).join(' '));
-  T('demo: 本局地圖編號在 0..MAP_VARIANTS-1 之内（每輪隨機抽）',
+  T('demo: 本局地圖編號在 0..MAP_VARIANTS-1 之內（每輪隨機抽）',
     G.demoStageIndex >= 0 && G.demoStageIndex < MAP_VARIANTS, String(G.demoStageIndex));
 
   // 180° 點對稱：cell[y][x] === cell[GRID_H-1-y][GRID_W-1-x] ⇒ 兩隊面對的地形完全等價

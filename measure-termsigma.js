@@ -61,7 +61,7 @@ for (const role of ['attack', 'defense']) {
     const zero = b.money.filter(v => Math.abs(v) < 1e-9).length / b.money.length;
     return { k, w: b.weight, mean: m, sd: sd(b.money), full, zero };
   }).sort((a, b) => Math.abs(b.mean) - Math.abs(a.mean));
-  console.log(`\n【${role}】逐項（依｜均值｜排序）  項＝每次貢獻的分｜σ（同局间的離散）｜踩滿率｜零分率`);
+  console.log(`\n【${role}】逐項（依｜均值｜排序）  項＝每次貢獻的分｜σ（同局間的離散）｜踩滿率｜零分率`);
   for (const r of rows) {
     if (Math.abs(r.mean) < 0.05 && r.zero > 0.98) continue;
     const dead = (r.sd < 0.5 || r.full >= 0.95) ? '  ← 選擇上等於常數' : '';

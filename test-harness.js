@@ -1519,6 +1519,71 @@ const tests = `
       EnemyAI._laneDir === undefined && EnemyAI._shotLaneOpen === undefined);
   }
 
+  // ══════ 競賽感（唯讀展示欄位）════════
+  // game.js 為了觀戰面板新增的三個唯讀欄位：team.shots（耗彈）、G.killEvents
+  // （擊殺播報）、t.serial（隊伍內出場編號）。訓練端不讀、規則不碰，
+  // 這裡釘住的是「它們量得對」跟「它們不會反過來影響行為」（其餘測試全過即是）。
+  console.log('-- 競賽感（唯讀展示）');
+  {
+    G.state = 'title'; G.demoMode = false; G.setupStage(1);
+    G.startDemo(true, 0);
+    T('競賽感: 開輪歸零（每隊 shots=0、killEvents=[]）',
+      G.teams.every(t => t.shots === 0) && Array.isArray(G.killEvents) && G.killEvents.length === 0);
+    T('競賽感: 開場 4 台都有隊伍內編號 serial（1 起、不重複）',
+      G.teams.every(tm => {
+        const nums = tm.tanks.map(t => t.serial).sort((a, b) => a - b);
+        return nums.length === 4 && nums.every((n, i) => n === i + 1);
+      }),
+      G.teams.map(tm => tm.tanks.map(t => t.serial).join(',')).join(' / '));
+
+    // 子彈誕生即計數：計量塊在 updateDemo 開頭，所以「掛進 bullets 的那一發」
+    // 在同一次 update 裡剛好被數一次 —— 本幀其他車新開的砲要等下一幀才計。
+    G.state = 'demo';
+    const shooter = G.teams[0].tanks.find(t => t.alive);
+    shooter.cooldown = 0; shooter.spawnTimer = 0;
+    const before = G.teams[0].shots;
+    const b = shooter.shoot(G.bullets);
+    if (b) G.bullets.push(b);
+    G.update();
+    T('競賽感: 新子彈誕生 → 只有開火者那一隊 +1（同發不重複、不記到對手）',
+      !!b && G.teams[0].shots === before + 1 && G.teams[1].shots === 0 && b.countedShot === true,
+      'b=' + !!b + ' 藍 ' + before + '→' + G.teams[0].shots + '／紅 ' + G.teams[1].shots);
+
+    // 打一場 soak：AI 滿場開火之後，兩隊都該有耗彈、事件都要長得像樣
+    let kcrash = false;
+    try { for (let i = 0; i < 600; i++) { G.update(); Renderer.tickFx(); } }
+    catch (e) { kcrash = true; console.log(e.stack); }
+    T('競賽感: 600 幀 soak 不炸（唯讀欄位不會反過來弄壞主迴圈）', !kcrash);
+    T('競賽感: soak 後兩隊都有耗彈（子彈誕生即計數，不是事後回推）',
+      G.teams.every(t => t.shots > 0), G.teams.map(t => t.shots).join('/'));
+    T('競賽感: killEvents 每筆都有幀號＋雙方隊伍＋編號（Kill feed 的素材齊）',
+      G.killEvents.length > 0 && G.killEvents.every(ev =>
+        Number.isInteger(ev.frame) && ev.frame >= 0 &&
+        (ev.killerTeam === 0 || ev.killerTeam === 1) &&
+        (ev.victimTeam === 0 || ev.victimTeam === 1) &&
+        Number.isInteger(ev.killerSerial) && Number.isInteger(ev.victimSerial)),
+      '共 ' + G.killEvents.length + ' 筆');
+
+    // 擊殺歸因：直接叫 creditKill（跟炸彈路徑同一個入口），驗「誰打爆誰」記得準
+    const ks = G.teams[0].tanks.find(t => t.alive);
+    const vs = G.teams[1].tanks.find(t => t.alive);
+    const kBefore = G.killEvents.length;
+    G.creditKill(ks, vs);
+    const ev = G.killEvents[G.killEvents.length - 1];
+    T('競賽感: creditKill 記下「誰在哪一幀打爆誰」（炸彈路徑同一個入口）',
+      G.killEvents.length === kBefore + 1 && ev.killerTeam === 0 && ev.victimTeam === 1 &&
+      ev.killerSerial === ks.serial && ev.victimSerial === vs.serial && ev.frame === G.frame);
+    T('競賽感: 單人模式不生擊殺事件（creditKill 的 demoMode 閘）', (() => {
+      G.state = 'title'; G.demoMode = false; G.setupStage(1);
+      G.state = 'playing'; G.player.spawnTimer = 0; G.spawnEnemy();   // 敵人按節奏登場，直接補一台（跟 bomb 測試同一招）
+      const p = G.player, e = G.enemies.find(t => t.alive);
+      if (!p || !e) return false;
+      const n = G.killEvents ? G.killEvents.length : 0;   // 觀戰遺留的事件不算數，比對的是「有沒有新增」
+      G.creditKill(p, e);
+      return (!G.killEvents || G.killEvents.length === n);
+    })());
+  }
+
   console.log('---');
   console.log(pass + ' passed, ' + fail + ' failed');
   if (fail > 0) throw new Error(fail + ' tests failed');

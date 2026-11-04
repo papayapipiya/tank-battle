@@ -196,7 +196,7 @@ function championSpec(champ) {
  * 練進攻時把防守方最新的冠軍放進紅席。兩種檔都吃 ——
  *   · 匯出的快照（tank-battle-genome，ai/trained-*.json）—— 自動訓練用的那條路
  *   · checkpoint（tank-battle-neat-checkpoint，runs/*.json）—— 手動練完想直接拿
- * 觀測規格不合就在這里擋掉：欄位變了舊基因組全部作廢，
+ * 觀測規格不合就在這裡擋掉：欄位變了舊基因組全部作廢，
  * 硬上場不會報錯、只會練出一個「看起來在進步」的假曲線。
  */
 function loadOpponent(file, label = '--vs') {

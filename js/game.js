@@ -375,6 +375,10 @@ class Game {
     // 訓練端（ai/arena.js）每幀取走就清空；觀戰頁不讀它，所以每輪開始要歸零，
     // 否則一個長Session 會把幾百筆小物件掛在 game 上。
     this.wallEvents = [];
+    // 競賽感（唯讀展示用）：擊殺播報的事件流，跟 wallEvents 同一個先例 ——
+    // 只記事實（誰在那一幀打爆誰），不下判斷、不影響任何規則與計分。
+    // 觀戰面板（js/hud.js）每 250ms 取走就清空，訓練端完全不讀它。
+    this.killEvents = [];
     this.freezeTimer = 0;
     this.shovelTimer = 0;
     this.spawnCd = 0;
@@ -404,6 +408,10 @@ class Game {
       shovelTimer: 0,
       score: 0,
       kills: 0,
+      // 競賽感（唯讀展示用）：本輪兩隊各開了幾砲。結算卡要算「每殺發數」，
+      // 只能在子彈誕生那一刻數 —— 子彈只活 1.4 秒，事後輪詢一定漏。
+      // 訓練端不讀這個數字，計分也不受影響。
+      shots: 0,
       // 炸彈道具直接判死、不經過 takeDamage()，所以這幾條命不會出現在
       // hp 差分（damageDone）裡。分開記，才說得清「傷害 ≥ 擊殺」為什麼
       // 偶爾不成立；訓練端 ai/arena.js 會把這個數字一起帶進統計。
@@ -450,6 +458,18 @@ class Game {
   updateDemo() {
     this.frame++;
 
+    // 競賽感（唯讀展示用）：數「這一幀新誕生了哪些子彈」。子彈在 updateDemo
+    // 之外誕生（玩家這裡／ai.js 的 EnemyAI），在這裡統一補數可以兩邊都不碰。
+    // 標記記在子彈自己身上，同一發不會被數兩次；不改彈道、不改節奏。
+    if (this.teams) {
+      for (const b of this.bullets) {
+        if (!b.countedShot) {
+          b.countedShot = true;
+          if (b.owner && this.teams[b.owner.team]) this.teams[b.owner.team].shots++;
+        }
+      }
+    }
+
     // 擲硬幣翻轉坦克陣列的處理順序。
     // 原本的固定順序（藍先紅後）讓所有「同幀互毀」都由藍隊獲勝：
     // 藍隊先開火 ⇒ 子彈先進陣列 ⇒ 藍的子彈先結算，紅的車先死，
@@ -460,7 +480,7 @@ class Game {
     if (--this.demoCap <= 0) {
       // 使用者規則：「超過 30 秒沒有分出勝負，紅色贏」。
       // 進攻方只有把紅隊老鷹打掉這一條路，拖時間對它沒有價值；
-      // 防守方「守住了」本身就是勝利條件，所以這里不再比積分（原本的
+      // 防守方「守住了」本身就是勝利條件，所以這裡不再比積分（原本的
       // demoScoreLeader 會讓消極避戰也贏，正是使用者要的積極性反面）。
       this.finishDemo(this.teams[DEMO_DEFENSE_TEAM], 'time');
       return;
@@ -606,6 +626,7 @@ class Game {
       bulletSpeed: stats.bulletSpeed, enemyType: type, team: team.id,
     });
     team.pool--;
+    // （競賽感：t.serial 在下面 team.spawned++ 那裡一併給號）
     // 訓練／對戰注入點：teamControllerSpecs[teamIndex] 決定這台車聽誰的
     if (this.teamControllerSpecs && this.AI) {
       const spec = this.teamControllerSpecs[team.id];
@@ -613,12 +634,29 @@ class Game {
     }
     team.tanks.push(t);
     team.spawned++;
+    // 競賽感（唯讀展示用）：這台車在隊伍裡的第幾台（1 起）。
+    // Kill feed 要寫「藍2 擊毀 紅5」，需要一個整輪穩定的編號 ——
+    // 物件參照不能當標籤（死了就被清掉），座標又會漂。純展示，不進任何規則。
+    t.serial = team.spawned;
     this.tanks.push(t);
   }
 
   /** 擊殺記點（炸彈路徑也復用此處，統一標記死亡） */
   creditKill(shooter, victim) {
     victim.alive = false;
+    // 競賽感（唯讀展示用）：擊殺播報的素材。只記事實（那一幀、誰打爆誰、
+    // 雙方隊伍與出場編號），消費端是觀戰面板的 Kill feed —— 訓練端不讀、
+    // 計分不讀，行為與 v14 完全一致。只在此為觀戰模式記，單人模式不生事件。
+    if (this.demoMode) {
+      const list = this.killEvents || (this.killEvents = []);
+      list.push({
+        frame: this.frame,
+        killerTeam: shooter ? shooter.team : null,
+        killerSerial: shooter ? shooter.serial : null,
+        victimTeam: victim.team,
+        victimSerial: victim.serial,
+      });
+    }
     const c = victim.center();
     Renderer.spawnExplosion(c.x, c.y, false);
     Renderer.spawnPopup(c.x, c.y, String(victim.score));

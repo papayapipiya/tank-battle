@@ -72,6 +72,40 @@
   let started = false;          // 已經進觀戰（start 執行過）
   let mode = 'dual';            // dual | both | rule | attack | defense
   const snap = { attack: null, defense: null };   // 各角色目前套用到場上的快照
+
+  /* ── 系列賽（競賽感）：這一頁連續觀戰的 BO7 記帳 ─────────────
+     每一輪結束（finishDemo 產生一個新的 demoResult 物件）記一勝，
+     先拿 4 勝的隊伍當系列冠軍；下一輪開打就重新開帳。
+     只活在記憶體：重整頁面＝新系列（要跨重整累計的是「已觀戰 N 場」，
+     那個數字本來就有 localStorage；系列的勝負應該跟「這次坐下來看的」綁在一起）。 */
+  const SERIES_BEST_OF = 7;
+  const series = { bestOf: SERIES_BEST_OF, wins: [0, 0], gameNo: 1, champion: null, lastResult: null };
+
+  /**
+   * 系列賽記帳：拿 demoResult 的物件身分當「這場記過沒有」的憑據 ——
+   * finishDemo 每一場都新建 demoResult，所以「重開本輪」重打的結果
+   * 是一顆新物件、會被記成新的一場，同一場卻不會被重複記兩次。
+   * 冠軍出爐後，下一輪開打（startDemo 把 demoResult 清成 null）就歸零重來。
+   */
+  function trackSeries(g) {
+    if (!g || !g.demoMode) return;
+    if (g.state === STATE.DEMO_RESULT && g.demoResult && series.lastResult !== g.demoResult) {
+      series.lastResult = g.demoResult;
+      const w = g.demoResult.winner;
+      if (w === 0 || w === 1) {
+        series.wins[w]++;
+        series.gameNo++;
+        if (series.wins[w] >= Math.ceil(series.bestOf / 2)) series.champion = w;
+      }
+      return;
+    }
+    if (series.champion !== null && g.state !== STATE.DEMO_RESULT && !g.demoResult) {
+      series.wins = [0, 0];
+      series.gameNo = 1;
+      series.champion = null;
+      series.lastResult = null;
+    }
+  }
   const swapCount = { attack: 0, defense: 0 };
   let pendingAuto = null;       // 有自動旗標、但還在等第一次匯出
   let autoBooted = false;
@@ -394,6 +428,7 @@
     // 面板上的數字是「訓練快照」，不是這一頁的即時進度 —— 但自動跟隨開著時，
     // 訓練端每代刷新快照，所以代數與時間會自己往上走。
     renderBadge = function () {
+      trackSeries(g);
       let played = stored;
       if (g.demoRound) {
         played = stored + Math.max(0, g.demoRound - firstRound);
@@ -427,8 +462,10 @@
     renderBadge();
     // 只留一個計時器：setMode／setStage（滑鼠面板）會重新 start()，
     // 每重開一次就再加一個 setInterval 的話，面板會越跑越慢。
+    // 250ms 而不是 1 秒：系列賽記帳（trackSeries）認的是 DEMO_RESULT 那個狀態，
+    // 而 4× 速度下一場結算只停留約 1.25 秒 —— 1 秒輪詢會漏掉整場比賽的勝負。
     if (badgeTimer) clearInterval(badgeTimer);
-    badgeTimer = setInterval(renderBadge, 1000);   // 每輪結束 demoRound 才 +1，1 秒足夠，且不打斷畫面迴圈
+    badgeTimer = setInterval(renderBadge, 250);
 
     for (const key of ['attack', 'defense']) {
       if (seatIsNetworked(key)) {
@@ -527,5 +564,18 @@
     },
     /** 面板上的「已觀戰 N 場」要不要順手落盤（localStorage）由 renderBadge 決定 */
     pollSnapshotNow(key) { if (ROLES[key]) pollOnce(key); },
+    /** 系列賽現況（BO7 連續記帳，只活在這一頁）：面板的計分板讀這裡 */
+    series: () => {
+      const need = Math.ceil(series.bestOf / 2);
+      return {
+        bestOf: series.bestOf,
+        wins: [series.wins[0], series.wins[1]],
+        gameNo: series.gameNo,
+        champion: series.champion,
+        matchPoint: series.champion === null &&
+          (series.wins[0] === need - 1 || series.wins[1] === need - 1),
+        started,
+      };
+    },
   };
 })();

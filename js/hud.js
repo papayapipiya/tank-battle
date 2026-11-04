@@ -205,7 +205,9 @@
     // 「地圖 137」單獨看會讓人以為真的有 137 關。
     setText('hudMap', `地圖 ${(g.demoStageIndex ?? 0) + 1}/${MAP_VARIANTS}`);
     setText('hudClock', secs.toFixed(1));
-    const urgent = secs <= 5;
+    // 張力可視化：最後 10 秒就進入紅色脈動（原本 5 秒才變紅）。
+    // 中位數一場才 9.5 秒 —— 5 秒的門檻常常整場都看不到，等於沒做。
+    const urgent = secs <= 10;
     setCls('hudClock', 'hud-clock-num' + (urgent ? ' urgent' : ''));
     const bar = $('hudClockBar');
     if (bar) {
@@ -252,6 +254,202 @@
           '對面那隊拿不到勝負分，因為那不是它打出來的。'
         : '終局原因與訓練報告讀同一份（js/game.js finishDemo）。';
     }
+  }
+
+  /* ── ④ 競賽感：張力／系列賽／Kill feed／結算卡 ──────────────────
+     全部是「現讀場上狀態 → 寫面板」，跟上面兩塊同一套紀律：
+     不存規則、不影響訓練，資料來源是 game 的唯讀欄位（shots／killEvents/
+     t.serial）＋ TANK_WATCH.series()。 */
+
+  /** 場上那兩隊的「世代隊名」：從快照現讀，沒快照就退回角色名 */
+  function teamNames() {
+    const NO_MODEL = { attack: { snap: null, onField: false }, defense: { snap: null, onField: false } };
+    const m = safeCall(() => { const W = window.TANK_WATCH; return W && W.models ? W.models() : NO_MODEL; }, NO_MODEL);
+    const name = (seat, mod, label) => {
+      const champ = mod && mod.snap ? mod.snap.championGeneration : null;
+      return champ != null ? `${label}・第 ${champ} 代冠軍` : `${label}・規則 AI`;
+    };
+    return [name(0, m.attack, '藍'), name(1, m.defense, '紅')];
+  }
+
+  function renderSeries() {
+    const el = $('hudSeries');
+    if (!el) return;
+    const W = window.TANK_WATCH;
+    const s = W && W.series ? safeCall(() => W.series(), null) : null;
+    if (!s || !s.started) {
+      el.textContent = '系列賽：還沒開場';
+      el.title = '進觀戰後開始記：BO7，先拿 4 勝的隊伍是系列冠軍。\n' +
+        '記帳只活在這一頁（重整＝新系列）；「已觀戰 N 場」才是跨重整的累計。';
+      el.className = 'hud-series';
+      return;
+    }
+    const names = teamNames();
+    const need = Math.ceil(s.bestOf / 2);
+    el.className = 'hud-series';
+    if (s.champion !== null) {
+      el.textContent = '';
+      el.append('系列冠軍：');
+      const b = document.createElement('span');
+      b.className = 'champ';
+      b.textContent = `${names[s.champion]}！`;
+      el.append(b, `（${s.wins[0]} — ${s.wins[1]}）`);
+      el.title = `BO${s.bestOf} 打完了：先拿 ${need} 勝的隊伍是系列冠軍。\n` +
+        '下一輪開打會自動重新開帳，從 0 — 0 再來一個系列。';
+      return;
+    }
+    // 一行塞不下世代隊名（面板 320px）→ 隊名進 title，本行只留比分與狀態
+    el.textContent = '';
+    el.append(`BO${s.bestOf} 第 ${s.gameNo} 場｜藍 ${s.wins[0]} — ${s.wins[1]} 紅`);
+    if (s.matchPoint) {
+      const mp = document.createElement('span');
+      mp.className = 'mp';
+      mp.textContent = '　賽末點';
+      el.append(mp);
+    }
+    el.title = `隊名：藍＝${names[0]}、紅＝${names[1]}\n` +
+      `BO${s.bestOf}：先拿 ${need} 勝的隊伍是系列冠軍。\n` +
+      '每一輪結束記一勝（不論贏法）；記帳只活在這一頁，重整＝新系列。';
+  }
+
+  /* ── 張力：破局進度（藍車離紅鷹最近多遠）＋包圍壓力（紅鷹 56px 內藍車數）──
+     用跟規則 AI 同一把尺（AI_ASSAULT_RADIUS / EnemyAI.baseWithin 的定義），
+     觀察者才不會跟規則各講各話。 */
+  function renderTension(g) {
+    const breach = $('hudBreach'), bar = $('hudBreachBar'), siegeEl = $('hudSiege');
+    if (!breach || !bar || !siegeEl) return;
+    const bases = g.map && g.map.bases;
+    const redBase = bases && bases[1], blueBase = bases && bases[0];
+    if (!redBase) return;
+    if (redBase.dead) {           // 已經破了：滿格，別再算距離
+      breach.textContent = '100%';
+      bar.style.width = '100%';
+      bar.className = 'breach';
+      siegeEl.textContent = '已破防';
+      return;
+    }
+    const rb = GameMap.baseCenter(redBase);
+    const bb = blueBase ? GameMap.baseCenter(blueBase) : null;
+    const full = bb ? Math.hypot(rb.x - bb.x, rb.y - bb.y) : 1;
+    let minD = full, siege = 0;
+    for (const t of g.tanks) {
+      if (!t.alive || t.team !== TEAM.BLUE) continue;
+      const c = t.center();
+      const d = Math.hypot(rb.x - c.x, rb.y - c.y);
+      if (d < minD) minD = d;
+      if (d <= AI_ASSAULT_RADIUS) siege++;
+    }
+    const prog = Math.max(0, Math.min(1, 1 - minD / full));
+    breach.textContent = `${Math.round(prog * 100)}%`;
+    bar.style.width = `${(prog * 100).toFixed(1)}%`;
+    bar.className = 'breach';
+    siegeEl.textContent = `${siege} 台`;
+  }
+
+  /* ── Kill feed：吃 game.killEvents（creditKill 記的唯讀事件流）──
+     每 250ms 取走就清空（跟訓練端吃 wallEvents 同一套節奏），
+     每條停 8 秒、最後 0.6 秒淡出，最多同時掛 4 條。 */
+  const kfQueue = [];             // { node, expires }
+  const KF_TTL = 8000, KF_FADE = 600, KF_MAX = 4;
+
+  function kfLabel(team, serial) {
+    const span = document.createElement('span');
+    if (team === 0 || team === 1) {
+      span.className = team === 0 ? 'blue' : 'red';
+      span.textContent = `${team === 0 ? '藍' : '紅'}${serial ?? '?'}`;
+    } else {
+      span.textContent = '？';    // 沒有歸因的擊殺（寧可漏記，不栽贓）
+    }
+    return span;
+  }
+
+  function drainKillFeed(g) {
+    const feed = $('killFeed');
+    if (!feed) return;
+    if (g.demoMode && g.killEvents && g.killEvents.length) {
+      const evs = g.killEvents.splice(0);
+      for (const ev of evs) {
+        const line = document.createElement('div');
+        line.className = 'kf-line';
+        const t = document.createElement('span');
+        t.className = 't';
+        t.textContent = `#${ev.frame}`;
+        line.append(t, kfLabel(ev.killerTeam, ev.killerSerial), ' 擊毀 ',
+          kfLabel(ev.victimTeam, ev.victimSerial));
+        kfQueue.push({ node: line, expires: Date.now() + KF_TTL });
+      }
+      while (kfQueue.length > KF_MAX) {
+        const old = kfQueue.shift();
+        if (old.node.parentNode) old.node.remove();
+      }
+      for (const k of kfQueue) if (!k.node.parentNode) feed.appendChild(k.node);
+    }
+    const now = Date.now();
+    for (let i = kfQueue.length - 1; i >= 0; i--) {
+      const k = kfQueue[i];
+      if (now >= k.expires - KF_FADE) k.node.classList.add('fading');
+      if (now >= k.expires) {
+        k.node.remove();
+        kfQueue.splice(i, 1);
+      }
+    }
+    feed.hidden = kfQueue.length === 0;
+  }
+
+  /* ── 結算卡：DEMO_RESULT 那 300 幀疊在畫布中央 ── */
+  function renderResultCard(g) {
+    const card = $('resultCard');
+    if (!card) return;
+    const res = g.demoResult;
+    const show = g.state === STATE.DEMO_RESULT && res;
+    card.hidden = !show;
+    if (!show) return;
+
+    const secs = ((DEMO_ROUND_CAP - Math.max(0, g.demoCap || 0)) / TARGET_FPS).toFixed(1);
+    const [bn, rn] = teamNames();
+    const winLabel = res.winner === 0 || res.winner === 1 ? ['藍隊', '紅隊'][res.winner] : '？';
+    const blue = g.teams[0], red = g.teams[1];
+    const spk = team => team.kills > 0
+      ? (team.shots / team.kills).toFixed(1) : '—';
+
+    card.innerHTML = '';
+    const title = document.createElement('div');
+    title.className = 'rc-title ' + (res.winner === 0 ? 'blue' : res.winner === 1 ? 'red' : '');
+    title.textContent = `${winLabel} 獲勝`;
+    card.appendChild(title);
+
+    const row = (k, v) => {
+      const r = document.createElement('div');
+      r.className = 'rc-row';
+      const a = document.createElement('span');
+      a.textContent = k;
+      const b = document.createElement('b');
+      b.textContent = v;
+      r.append(a, b);
+      card.appendChild(r);
+    };
+    row('結果', res.text || '');
+    row('用時', `${secs} 秒`);
+    row('擊殺', `${blue.kills} — ${red.kills}`);
+    row('耗彈', `${blue.shots} — ${red.shots}`);
+    row('每殺發數', `${spk(blue)} — ${spk(red)}`);
+    if (res.ownGoal) {
+      const w = document.createElement('div');
+      w.className = 'rc-own';
+      w.textContent = `⚠ 自破：${['藍', '紅'][res.killerTeam] || '?'}隊打爆自家老鷹`;
+      card.appendChild(w);
+    }
+    const W = window.TANK_WATCH;
+    const s = W && W.series ? safeCall(() => W.series(), null) : null;
+    if (s) {
+      const line = document.createElement('div');
+      line.className = 'rc-series';
+      line.textContent = s.champion !== null
+        ? `系列賽：${s.wins[0]} — ${s.wins[1]}，系列冠軍出爐！`
+        : `系列賽：藍 ${s.wins[0]} — ${s.wins[1]} 紅（BO${s.bestOf}）`;
+      card.appendChild(line);
+    }
+    card.title = `藍＝${bn}、紅＝${rn}\n耗彈與每殺發數來自本輪子彈誕生計數（唯讀展示）。`;
   }
 
   /* ── ③ 滑鼠操作 ── */
@@ -368,6 +566,24 @@
     renderBattle();
     const W = window.TANK_WATCH;
     const g = window.__game;
+    if (g) {
+      // 競賽感三塊：只在觀戰模式有意義，單人模式整個疊層收起來
+      const demo = !!g.demoMode;
+      const feed = $('killFeed');
+      if (feed && !demo) feed.hidden = true;
+      if (demo) drainKillFeed(g);
+      renderResultCard(g);
+      if (demo && (g.state === STATE.DEMO || g.state === STATE.DEMO_INTRO || g.state === STATE.DEMO_RESULT)) {
+        renderTension(g);
+      } else {
+        // 退回標題／單人模式：張力那兩行不要留著上一場的數字
+        setText('hudBreach', '—');
+        setText('hudSiege', '—');
+        const bb = $('hudBreachBar');
+        if (bb) { bb.style.width = '0%'; bb.className = 'breach'; }
+      }
+    }
+    renderSeries();
     if (W && W.mode && Date.now() - lastSwitch > 1500) {
       markActive('btnMode', 'mode', W.mode);
       lastSwitch = Date.now();

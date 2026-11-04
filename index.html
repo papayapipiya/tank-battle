@@ -44,6 +44,14 @@
       <div class="hud-bar"><i id="hudClockBar"></i></div>
       <div class="hud-rule" id="hudRule">藍 30 秒內破紅鷹＝藍勝；拖滿或兵力耗盡＝紅勝</div>
 
+      <!-- 張力可視化：破局進度＝藍車離紅鷹最近還有多遠；包圍壓力＝紅鷹 56px 內的藍車數。
+           全部由 hud.js 每 250ms 從場上現算，面板自己不存任何規則。 -->
+      <div class="hud-tension">
+        <div class="hud-t-row"><span>藍隊破局進度</span><b id="hudBreach">0%</b></div>
+        <div class="hud-bar thin"><i id="hudBreachBar"></i></div>
+        <div class="hud-t-row"><span>包圍壓力（紅鷹 56px 內藍車）</span><b id="hudSiege">0 台</b></div>
+      </div>
+
       <div class="hud-team blue">
         <div class="hud-team-head"><b>藍</b><span class="hud-role">進攻</span>
           <span class="hud-win" id="hudBlueWin">唯一贏法：打穿紅鷹</span></div>
@@ -71,6 +79,9 @@
       </div>
 
       <div class="hud-end" id="hudEnd">（本輪還沒結束）</div>
+
+      <!-- 系列賽計分板：BO7 連續記帳（watch.js 的 trackSeries），面板只讀 TANK_WATCH.series() -->
+      <div class="hud-series" id="hudSeries">系列賽：還沒開場</div>
     </section>
 
     <!-- 單人模式仍可用（按 Enter 開打）：人類不玩時這一區是-hide 的 -->
@@ -87,8 +98,12 @@
     </section>
   </div>
 
-  <!-- Game Canvas -->
-  <canvas id="gameCanvas"></canvas>
+  <!-- 戰場 ＋ 疊在畫布上的競賽感元素（Kill feed 在右上、結算卡在中央） -->
+  <div class="arena-wrap">
+    <canvas id="gameCanvas"></canvas>
+    <div class="killfeed" id="killFeed" hidden></div>
+    <div class="result-card" id="resultCard" hidden></div>
+  </div>
 
   <!-- ══ 右欄：③ 滑鼠操作 ══ -->
   <div class="panel panel-right">

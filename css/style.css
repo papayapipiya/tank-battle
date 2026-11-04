@@ -217,12 +217,24 @@ kbd {
 
 .hud-clock { display: flex; align-items: baseline; gap: 6px; }
 .hud-clock-num { font-size: 30px; font-weight: bold; color: #fff; font-variant-numeric: tabular-nums; }
-.hud-clock-num.urgent { color: #f85858; }
+/* 張力可視化：最後 10 秒不只變紅，還要脈動 —— 靜止的紅字看兩眼就習慣了 */
+.hud-clock-num.urgent { color: #f85858; animation: clockPulse 1s ease-in-out infinite; }
+@keyframes clockPulse {
+  0%, 100% { text-shadow: 0 0 0 rgba(248, 88, 88, 0); }
+  50% { text-shadow: 0 0 12px rgba(248, 88, 88, 0.9); }
+}
 .hud-clock-unit { font-size: 16px; color: #999; }
 
 .hud-bar { height: 8px; background: #111; border: 1px solid #444; overflow: hidden; }
 .hud-bar > i { display: block; height: 100%; width: 100%; background: #7bd88f; }
 .hud-bar > i.urgent { background: #f85858; }
+
+/* 張力可視化（js/hud.js 現算現寫）：破局進度條＋包圍壓力 */
+.hud-tension { display: flex; flex-direction: column; gap: 4px; }
+.hud-t-row { font-size: 16px; color: #8f8f8f; display: flex; justify-content: space-between; }
+.hud-t-row b { color: #fff; font-variant-numeric: tabular-nums; }
+.hud-bar.thin { height: 6px; }
+.hud-bar > i.breach { background: #58a8e8; }
 
 .hud-rule { font-size: 16px; color: #8a8a8a; line-height: 1.5; }
 
@@ -245,9 +257,82 @@ kbd {
 .hud-end { font-size: 16px; color: #a8a8a8; line-height: 1.5; }
 .hud-end.own { color: #f85858; }
 
+/* 系列賽計分板：BO7 連續記帳（watch.js trackSeries 記，hud.js 只讀） */
+.hud-series {
+  font-size: 17px;
+  color: #f8d840;
+  border: 1px solid #4a4424;
+  background: #1e1c12;
+  padding: 6px 8px;
+  line-height: 1.5;
+}
+.hud-series .mp { color: #f85858; font-weight: bold; }
+.hud-series .champ { color: #7bd88f; font-weight: bold; }
+
 /* 單人模式那區預設收起來：觀戰時看到「生命／火力」只會讓人以為還能開槍 */
 .hud-block.legacy { display: none; }
 .hud-block.legacy.show { display: flex; }
+
+/* ── 畫布上的競賽感疊層（Kill feed ＋ 結算卡）──
+   canvas 原本的尺寸規則一個字都不動，只是搬進 arena-wrap 裡：
+   wrap 認 canvas 的內在比例當自己的大小，疊層用百分比定位就跟著對。 */
+.arena-wrap { position: relative; align-self: flex-start; }
+.arena-wrap #gameCanvas { display: block; }
+
+/* Kill feed：右上角的擊殺播報，一條 8 秒後淡出 */
+.killfeed {
+  position: absolute;
+  top: 10px;
+  right: 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  align-items: flex-end;
+  pointer-events: none;
+  max-width: 80%;
+}
+.killfeed .kf-line {
+  font-size: 16px;
+  color: #eee;
+  background: rgba(0, 0, 0, 0.72);
+  border: 1px solid #444;
+  padding: 3px 8px;
+  white-space: nowrap;
+  animation: kfIn 0.18s ease-out;
+}
+.killfeed .kf-line .t { color: #8f8f8f; margin-right: 6px; font-variant-numeric: tabular-nums; }
+.killfeed .kf-line .blue { color: #58a8e8; font-weight: bold; }
+.killfeed .kf-line .red { color: #e85858; font-weight: bold; }
+.killfeed .kf-line.fading { opacity: 0; transition: opacity 0.6s ease-in; }
+@keyframes kfIn {
+  from { transform: translateX(14px); opacity: 0; }
+  to { transform: none; opacity: 1; }
+}
+
+/* 結算卡：DEMO_RESULT 那 300 幀疊在畫布中央 */
+.result-card {
+  position: absolute;
+  left: 50%;
+  top: 42%;
+  transform: translate(-50%, -50%);
+  min-width: 230px;
+  max-width: 86%;
+  background: rgba(10, 10, 10, 0.9);
+  border: 2px solid #f8d840;
+  padding: 12px 16px;
+  font-size: 17px;
+  line-height: 1.6;
+  color: #eee;
+  pointer-events: none;
+}
+.result-card .rc-title { font-size: 20px; font-weight: bold; color: #f8d840; margin-bottom: 6px; }
+.result-card .rc-title.blue { color: #58a8e8; }
+.result-card .rc-title.red { color: #e85858; }
+.result-card .rc-row { display: flex; justify-content: space-between; gap: 16px; }
+.result-card .rc-row span:first-child { color: #9a9a9a; }
+.result-card .rc-row b { font-variant-numeric: tabular-nums; }
+.result-card .rc-series { margin-top: 6px; padding-top: 6px; border-top: 1px solid #3a3a3a; color: #f8d840; }
+.result-card .rc-own { color: #f85858; }
 
 /* ── 按鈕 ── */
 .btn-row { display: flex; flex-wrap: wrap; gap: 6px; }

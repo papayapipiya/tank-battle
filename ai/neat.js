@@ -182,7 +182,7 @@ class Genome {
     this.nodes.push({ id: newId, kind: 'hidden', bias: rand() * 2 - 1 });
     // 分裂前後語義保持一致：in→new 權重 1、new→out 繼承原權重。
     // 兩條新邊都向同一個「基因計數器」要號碼（edgeInnovations），
-    // 絕不能复用被分裂邊的創新號 —— 否則一個號碼對應兩條邊，
+    // 絕不能複用被分裂邊的創新號 —— 否則一個號碼對應兩條邊，
     // crossover 對齊和物種距離都會錯亂（test-neat.js 會抓到）。
     this.links.set(this.key(l.in, newId),
       { in: l.in, out: newId, innovation: hist.connInnovation(l.in, newId), weight: 1, enabled: true });

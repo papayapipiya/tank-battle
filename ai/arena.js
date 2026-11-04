@@ -242,7 +242,7 @@ class Arena {
         for (const ev of wallEv) {
           const s = stats[ev.team];
           // 只認「拆敵人要塞牆」：打到自己家那一圈的格數是 ownBaseCellsLost
-          // 那條紅线的證據，不能同時算進進攻成績。
+          // 那條紅線的證據，不能同時算進進攻成績。
           if (!s || ev.baseIndex !== 1 - ev.team) continue;
           const c = baseCenters[ev.baseIndex];
           // 沒有開火點（非坦克子彈、舊資料流）→ 一律算遠：保守，不虚發近距離的分。
@@ -314,7 +314,7 @@ class Arena {
         }
       }
       // v7 近身殲滅：敵車死的時候「身邊就有一台敵車」→ 記給那台車所屬的隊。
-      // 為什麼用距離歸因、不用子彈歸因：這一項要的就是「近距离打死人」這個事實；
+      // 為什麼用距離歸因、不用子彈歸因：這一項要的就是「近距離打死人」這個事實；
       // 用子彈 owner 會把炸彈道具、流彈等路徑也算進去，那些不是格鬥。
       // 最近的敵車為準（一局只會記一次），避免三台車圍殺時重複計功。
       for (const { t, hp } of tanksBefore) {

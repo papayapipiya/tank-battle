@@ -127,6 +127,53 @@
  *           而且「準則變成不打牆」是可被規避的存在型懲罰。先看 48/96 場探針
  *           怎麼說，要加再加（一次只動一個旋鈕，本專案的慣例）。
  *         · 算式變了 ⇒ v10 的分數不可比，兩族冠軍在新尺下重評。
+ *   v12：**把「打死人」變成一筆存得下來的錢（批次六：激烈度）。**
+ *         · 起因是可量的，不是觀感。`node audit-intensity.js 120` 對同一份考題
+ *           （255 張隨機圖 × 各自的 seed）量現任雙冠軍：平均 9.7 秒收場、中位 8.8 秒，
+ *           每場 5.9 殺、112.3 發、19.1 發才換一台；同一份考題換規則 AI 上場是
+ *           25.6 秒／12.8 殺／54 發／4.2 發一殺。互射占比反而是模型的 60.9% 對規則的 9.0%
+ *           —— 缺的不是交火，是「殲滅」與「收尾」：槍很兇，人不死，8 秒就斬首。
+ *         · 病根在尺：killPer1k／damagePer1k 是「每 1000 在場幀」的流量計量，
+ *           一局只打 9 秒的車把分子分母一起縮小，照樣坐滿天花板；
+ *           而 breach(70)＋speed(20) 讓「直取老鷹」遠比「清掉場上的人」值錢，
+ *           accuracy(封頂 1.5hp／發)＋spray(-12) 又幾乎不罚 19 發一殺。
+ *         · A1 新增 annihilation：min(8, 擊殺數) × 6 —— 尺上第一筆「總量」戰功，
+ *           不隨時長打折；短局要拿滿就得真的一台一台清。
+ *         · A2 speed 進攻 20→8、防守 12→3，並乘上殲滅實績 min(1, 擊殺數 / 4)：
+ *           速決本身不再是一張大獎，要「又快又打死人」才拿得到原來的位置。
+ *           兩席幅度不同不是隨手：v10 那條「兩席本業上限差 ≤10」是不變量，
+ *           進攻被砍 12 而防守只砍 6 的話差會變成 12.05（破線），砍到 3 才回到 9.1。
+ *         · A3 accuracy 封頂 1.5hp/發→0.8hp/發、權重 5→10（總量 7.5→8，但要在每發
+ *           都有 0.8hp 的準頭才摸得到），spray -12→-30：彈雨開始賠分。
+ *         · A4（A1 的預算，不是新旋鈕）killPer1k 4.5→3.0、damagePer1k 1.5→1.0：
+ *           annihilation 那 48 分是「換掉」流量項，不是疊在上面 ——
+ *           通用交戰軸的天花板維持 v11 的 242，`--mode ceiling` 量出來的
+ *           「本業佔自己天花板」才不會從 44% 被稀釋到 38%（那條線是 v10 的驗收，
+ *           也是起步平衡度的來源）。
+ *         · 刻意不動 breach(70)：破網仍是進攻席的全部目標，只是不再「越早越划算」。
+ *           也沒有新增「貼身對射時長」那項 —— 使用者選的是計分面，先把尺的偏向修正，
+ *           一次只動一個旋鈕；規則端（js/ai.js）這版完全沒改。
+ *         · 算式與權重都變 ⇒ v11 的分數不可比，兩族冠軍在新尺下重評。
+ *   v13：**給「破局」加殲滅實績門檻（批次七：激烈度驗收的第二刀）。**
+ *         · 起因仍是量的，而且這次是 v12 自己的後續讀數（`node audit-intensity.js 120`，
+ *           BALANCE-RESEARCH §5.9.7；`runs/audit-intensity.v12-mature2.log`，藍 4064／紅 4026）：
+ *           v12 把三條線都拉回正確方向（中位終局 8.8 → 10.8 秒、每場擊殺 5.9 → 8.4、
+ *           每 1 殺 19.1 → 14.5 發），但使用者選的三條驗收線（≥15 秒／≥9 台／≤8 發）**全部仍未過**，
+ *           而且 120 局裡 38.3% 還在 10 秒內收場。
+ *         · 病根在 v12「刻意不動」的那一項：`node ai/balance.js --mode matrix`（兩席冠軍對打那格）
+ *           量到進攻席最大的單一項還是 breach ＋40.83／局、發放率 58.3%、**不問清了幾台**，
+ *           同一格局均 573 幀＝9.6 秒；`annihilation` 雖然從 18.00 長到 22.75，
+ *           「先清人再破網」在排序上跟「繞過所有人直取老鷹」**同分、但更慢**，尺並沒有在選前者。
+ *         · 動作：breach 由「打破就值 70」改成「打破 × min(1, 擊殺數 / 6) × 70」。
+ *           型式沿用 v12 給 speed 的那條實績門檻，只是線拉到 6 台（一隊 20 台、開場 4 台，
+ *           6 台是「壓倒性但還沒屠場」的程度，比 annihilation 的封頂 8 台低一档）。
+ *         · 規則端 js/ai.js 一行不動：破局照樣算贏，只是勝負分不再無條件全額發放。
+ *           也不動 foeWall／besiege／annihilation／spray —— 一次只動一個旋鈕。
+ *         · ⚠ 已知代價（都在 §5.9.7 算過）：現任進攻冠軍每局平均 3.8 殺，門檻把它的 breach
+ *           從 70 打到 ≈44.3，落地必定掉分（又一次換尺，舊分數全部作廢）；
+ *           進攻席只剩「稀有事件 × 實績」這一條勝負訊號，排序變稀，要重新量信噪比
+ *           （v12 那輪量到的是每局 σ 66.46 → 24 局均值 σ 13.57）。
+ *         · 算式變了 ⇒ v12 的分數不可比，兩族冠軍在新尺下重評。
  */
 /** 場地半場（px）：penetration 項用它把「離敵鷹最近多少」歸一化。
  *  = js/constants.js 的 FIELD_H / 2（9:21 之後是高度的一半，不是寬）。
@@ -160,14 +207,48 @@ const HALF_HP_FULL = 6;           // halfDefense（半場攔截）封頂的 hp
 const WALL_CELL_CAP = 8;          // foeWall 封頂的格數（牆共 20 格，v6 起就封在 8）
 const WALL_FAR_SHARE = 0.25;      // v11：開火點在敵鷹門口（56px）外時，每格的折算比例
 
-const SCORING_VERSION = 11;
+/* v12（激烈度）的三把尺。都是從 `node audit-intensity.js 120` 的實測長出來的：
+ *   模型冠軍 9.7 秒收場／5.9 殺／19.1 發一殺｜規則 AI 25.6 秒／12.8 殺／4.2 發一殺。
+ * ⚠ 這幾個數會同時出現在履歷（ai/ledger.js TERMS 拆解）與測試的期望算式裡，
+ *    一律從這裡取，不要在別處重打 —— 改了這裡沒改那邊，看板就跟實際計分對不上。 */
+const ANNIHILATION_CAP = 8;       // annihilation 封頂的擊殺台數（一局 20 台，8 台已是壓倒性殲滅）
+const SPEED_KILL_PROOF = 4;       // speed 要幾台擊殺才給滿（比照 DENIAL_PROOF_HP 的「實績」做法）
+const ACCURACY_HP_CAP = 0.8;      // accuracy 封頂的每發平均傷害（v11 是 1.5；4hp 的車打兩發就摸到）
+const SPRAY_SHOTS_MIN = 30;       // 開火超過這個數才考慮判成彈雨（少於它就算不準也發不了幾分）
+const SPRAY_HP_MAX = 0.25;        // 每發平均傷害低於這個數 ⇒ 這一局的槍是在灑不在打
+
+/* v13（破局要殲滅實績）的那道門檻。跟上面幾把尺一樣是從實測長出來的，不是拍的：
+ * `node ai/balance.js --mode matrix`（runs/balance-matrix.v12-mature2.json，兩席冠軍對打 24 局）
+ * 讀到進攻席 breach ＋40.83／局、發放率 58.3%、每局擊殺只有 3.8 台、局均 573 幀＝9.6 秒。
+ * 定在 6 台的理由：一隊出兵 20 台、開場 4 台，6 台是「壓倒性但還沒清場」，
+ * 比 annihilation 的封頂（ANNIHILATION_CAP＝8）低一檔 —— 門檻要比封頂低，
+ * 否則「拿滿 breach」變成「拿滿 annihilation」的重複收費，同一件事處兩次。
+ * ⚠ 這條線會同時出現在履歷（ai/ledger.js 讀 TERMS.formula）與測試的期望算式裡，一律從這裡取。 */
+const BREACH_KILL_PROOF = 6;
+
+const SCORING_VERSION = 13;
 
 /** 一句話講清楚「這一版改的是什麼」：
  *  收斂曲線上的接縫（ championRescore ／換版）要能被看懂，
  *  不然使用者只看到「v7 → v8，分數掉了一截」，不知道掉的那一截是尺變了還是車變弱了。
  *  升版時在這裡補一句，訓練履歷／考題那一段會把它印出來。 */
 const SCORING_VERSION_NOTE =
-  `v${SCORING_VERSION}：攻擊目標順序進計分（批次五 J）—— 拆敵人要塞牆要看在哪裡開的槍：` +
+  `v${SCORING_VERSION}＝破局要殲滅實績（批次七）：breach 從「打破就值 70」改成「打破 × min(1, 擊殺數/${BREACH_KILL_PROOF}) × 70」—— ` +
+  'v12 給「殲滅」定價了，但沒重新定價「破局」，所以 24 局冠軍對打實測裡進攻席最大的單一項仍是 breach（＋40.83／局、發放率 58.3%、不問清了幾台），' +
+  '同一格局均 573 幀＝9.6 秒：「先清人再破網」跟「繞過所有人直取老鷹」同分，尺沒在選前者。' +
+  `門檻型式沿用 v12 給 speed 的那一條（min(1, 擊殺/${SPEED_KILL_PROOF})），線拉到 ${BREACH_KILL_PROOF} 台；` +
+  '規則端 js/ai.js 一行不動（破局照樣算贏），foeWall／besiege／annihilation／spray 也都不動。' +
+  '⚠ 代價：現任冠軍在「只斬首」的考題上會掉分（實測每局 3.8 殺 ⇒ breach 70→約 44），' +
+  '而進攻席的勝負訊號從「稀有事件」變成「稀有事件 × 實績」，排序更稀，信噪比要重新量。' +
+  'v12＝激烈度（批次六）：尺上第一次有「殲滅總量」這筆錢 —— ' +
+  `新增 annihilation ＝ min(${ANNIHILATION_CAP}, 擊殺數) × 6（不隨時長打折，短局要拿滿就得一台一台清）；` +
+  `speed 進攻 20→8、防守 12→3，再乘殲滅實績 min(1, 擊殺數/${SPEED_KILL_PROOF})（速決不再是一張大獎）；` +
+  `accuracy 封頂 1.5hp/發→${ACCURACY_HP_CAP}hp/發（權重 5→10，總量 7.5→8）、spray -12→-30（每發 <${SPRAY_HP_MAX}hp 的彈雨開始賠分）。` +
+  '新項是「換掉」不是「加在上面」：killPer1k 4.5→3.0、damagePer1k 1.5→1.0，通用交戰軸的天花板維持 242，' +
+  '兩席本業上限的差也壓回 ≤10（防守 speed 因此砍到 3 而非 6）。' +
+  'breach(70)／foeWall／besiege／denial 那些不動，規則端 js/ai.js 這版完全沒改 —— 量到的病是「槍很兇、人不死、8 秒斬首」，' +
+  '而這是尺把「早收場」定價太高、「打死人」按流量給分的結果，不是選靶的問題。' +
+  `v11：攻擊目標順序進計分（批次五 J）—— 拆敵人要塞牆要看在哪裡開的槍：` +
   `foeWall 改成 min(${WALL_CELL_CAP}, 近距離格數 + ${WALL_FAR_SHARE}×遠距離格數)（${WALL_CELL_CAP} 格封頂不變），` +
   `「近」＝開火點離敵鷹 ≤56px（跟規則 AI 改瞄主堡的門檻同一把尺，由 js/ai.js 判），` +
   '新計量 foeWallNear／foeWallFar（逐槍歸因到子彈的開火點）；breach／penetration／besiege 那些不動，' +
@@ -188,12 +269,12 @@ const roleOfTeam = teamId => (teamId === ATTACK_TEAM ? ROLES.ATTACK : ROLES.DEFE
 
 const W = {
   // ── 勝負 ──
-  breach: 70,              // 進攻：摧毀紅隊老鷹（藍隊唯一的贏法）
+  breach: 70,              // 進攻：摧毀紅隊老鷹（藍隊唯一的贏法）；v13 起要按殲滅實績打折，見該項 value
   timeoutFail: -25,        // 進攻：30 秒到還沒破局（v10 起按推進程度打折，見該項 value）
   holdWin: 45,             // 防守：打掉藍隊老鷹＝滿分；只撐過時鐘＝0.4（18 分，與 v9 同值）
   holdGate: 34,            // 防守：這局贏得不消極（v10：2hp 門檻＋門前占比；25→34 把防守本業上限補到與進攻同高）
   ownBaseAlive: { attack: 6, defense: 14 },
-  speed: { attack: 20, defense: 12 },
+  speed: { attack: 8, defense: 3 },   // v12：20→8／12→3，且要殲滅實績才給滿（為什麼兩席砍的幅度不同見 speed 的 why）
   stalemate: -18,          // 跑到無頭引擎保險絲還沒有結果
 
   // ── 進攻推進 ──
@@ -209,10 +290,11 @@ const W = {
 
   // ── 兩邊都算的戰鬥與紀律（v10：天花板統統壓到本業之下）──
   teamwork: 6,
-  killPer1k: 4.5,
+  killPer1k: 3.0,          // v12：4.5→3.0（封頂 24/1000 幀不動 ⇒ 天花板 108→72）。理由見 annihilation
+  annihilation: 6,         // v12：每場「總共」打死幾台（封頂 8 台）—— 尺上唯一的殲滅總量
   death: -4,
-  damagePer1k: 1.5,
-  accuracy: 5,
+  damagePer1k: 1.0,        // v12：1.5→1.0（封頂 24 ⇒ 36→24），與 killPer1k 同一個理由
+  accuracy: 10,            // v12：5→10，但封頂從 1.5hp/發收到 0.8hp/發（總量 7.5→8，門檻變嚴）
   powerup: 2,
   firepowerUp: 3,
   ownBaseCellLost: -3,
@@ -221,7 +303,7 @@ const W = {
   duelKill: 6,               // v7：貼身距離內解決掉一台敵車
   wallPin: -40,
   monotony: -35,
-  spray: -12,
+  spray: -30,                // v12：-12→-30，實測 19 發才換一台的彈雨在舊價下完全不在乎
 };
 
 const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
@@ -239,12 +321,21 @@ const TERMS = [
   /* ══ 勝負：兩個角色是兩種不同的贏法 ══════════════════════ */
   {
     key: 'breach', label: '摧毀紅隊老鷹', roles: [ROLES.ATTACK], weight: W.breach,
-    formula: '進攻方自己把紅隊老鷹打掉（是＝1／否＝0）× 70；紅隊自破不算戰功',
+    formula: `進攻方自己把紅隊老鷹打掉 × min(1, 擊殺數 / ${BREACH_KILL_PROOF}) × 70；紅隊自破不算戰功`,
     why: '使用者規則：藍色只能把對方打敗才算贏。這一項就是進攻方的全部目標，' +
       '所以它是全表最大的一項 —— 其它進攻項只是「還沒打破時的方向指引」。' +
       'v7 起加了一道歸因：紅隊把自己的老鷹打爆時，規則上藍隊確實贏了，' +
-      '但那是對方犯的錯，不是藍隊打出來的 —— 發分等於教網路「等對手自杀」。',
-    value: c => (c.winByMerit ? 1 : 0),
+      '但那是對方犯的錯，不是藍隊打出來的 —— 發分等於教網路「等對手自殺」。' +
+      'v13 再加一道實績：打破老鷹只是「結果」，尺要付錢的是「把場上的人清掉之後再打破」。' +
+      '⚠ 這一次的依據是 v12 自己的後續讀數（不是觀感）：`node audit-intensity.js 120` 兩席成熟冠軍' +
+      '讀到中位終局 10.8 秒、每場 8.4 殺、14.5 發一殺 —— 三條驗收線都朝對的方向走、也都還沒到，' +
+      '而 120 局裡 38.3% 還在 10 秒內收場；`--mode matrix` 那格更直接：進攻席最大的單一項還是 breach' +
+      '（＋40.83／局、發放率 58.3%）、局均 573 幀＝9.6 秒，每局只清掉 3.8 台。' +
+      '換句話說，v12 讓「清人」開始有錢，但「不清人也能拿滿 70」那條捷徑還在，' +
+      '「先清人再破網」在排序上跟直取老鷹同分、只是更慢 —— 沒有理由選它。' +
+      '門檻用 min(1, 擊殺/6) 而不是「要不要打破」：保留稀有事件本身的大獎（不然進攻席的勝負訊號會整個消失，' +
+      '那是批次四「分數不動、行為亂跳」那個坑），只把「空手斬首」那一端壓到 0。',
+    value: c => (c.winByMerit ? clamp((c.s.kills || 0) / BREACH_KILL_PROOF, 0, 1) : 0),
   },
   {
     key: 'timeoutFail', label: '拖到時間到沒破局', roles: [ROLES.ATTACK], weight: W.timeoutFail,
@@ -306,13 +397,26 @@ const TERMS = [
   {
     key: 'speed', label: '結束得快', roles: both, weight: W.speed,
     formula: {
-      attack: '贏的時候：(1 - 局幀 / 上限) × 20（破局越早分越高）',
-      defense: '靠打掉藍隊老鷹取勝時：(1 - 局幀 / 上限) × 12；撐到時間到不算「快」',
+      attack: `贏的時候：(1 - 局幀 / 上限) × min(1, 擊殺數 / ${SPEED_KILL_PROOF}) × ${W.speed.attack}（v12：權重 20→${W.speed.attack}，且要有殲滅實績）`,
+      defense: `靠打掉藍隊老鷹取勝時：同上 × ${W.speed.defense}（v12：12→${W.speed.defense}）；撐到時間到不算「快」`,
     },
-    why: '同樣是贏，10 秒破網比 29.9 秒驚險守住好得多。防守方拖滿 30 秒拿不到這一項' +
-      '（那是時鐘判勝，不是它主動結束的），所以消極拖延至少不會被這一項誇大。' +
-      'v7：對方自破送來的勝利也不算「快」—— 那個時間是它浪費在自己家的。',
-    value: c => (c.winByMerit && !c.rep.timedOut ? clamp(1 - c.rep.frames / c.maxFrames, 0, 1) : 0),
+    cap: `整局一局打到 ${SPEED_KILL_PROOF} 台才給滿；沒打死人 ⇒ 這一項 0 分`,
+    why: '同樣是贏，10 秒破網比 29.9 秒驚險守住好得多 —— 但 v11 之前這條太貴：' +
+      'breach(70)＋speed(20) 讓「繞過所有人直取老鷹」成為進攻席的最優解，' +
+      '實測雙冠軍對打平均 9.7 秒就收場（中位 8.8 秒），場上 12.8 台的規則 AI 對局是 25.6 秒，' +
+      '觀眾看到的是「兩輛車衝過、老鷹爆了」，不是對戰。' +
+      'v12 把單價砍到 8／6，再乘上殲滅實績 min(1, 擊殺/' + SPEED_KILL_PROOF + ')：' +
+      '要「早收場」照樣加分，但得先把人打死，速決本身不再是一張大獎。' +
+      '「實績」的寫法比照 denial 的 DENIAL_PROOF_HP —— 分數要來自自己打出來的東西，' +
+      '不是來自對手剛好很弱。v7：對方自破送來的勝利也不算「快」—— 那個時間是它浪費在自己家的。' +
+      '⚠ 兩席砍的幅度不同（20→8、12→3 而不是各砍一半）：v10 立了一條不變量 —— ' +
+      '兩席「本業上限」的差要 ≤10 分，否則一族天生比另一族有更多可爬的空間，起步就不平衡。' +
+      '進攻席這一項被砍掉 12 分，防守席若只砍 6 分，兩席的差就從 6.2 漲到 12.05、破線；' +
+      '砍到 3 分讓差回到 9.1。這也符合該項的語意：防守席的 speed 只在它真的打掉藍鷹時才發，' +
+      '而紅隊的本業是「守住＋清場」，不是「快」。',
+    value: c => (c.winByMerit && !c.rep.timedOut
+      ? clamp(1 - c.rep.frames / c.maxFrames, 0, 1) * clamp((c.s.kills || 0) / SPEED_KILL_PROOF, 0, 1)
+      : 0),
   },
   {
     key: 'stalemate', label: '跑到保險絲還沒有結果', roles: both, weight: W.stalemate,
@@ -433,13 +537,34 @@ const TERMS = [
   },
   {
     key: 'killPer1k', label: '擊殺效率', roles: both, weight: W.killPer1k,
-    formula: 'min(24, 擊殺數 / 在場幀 × 1000) × 4.5',
+    formula: `min(24, 擊殺數 / 在場幀 × 1000) × ${W.killPer1k}`,
     cap: '每 1000 在場幀 24 殺封頂',
     why: '流量型計量一律逐幀歸一化：短局長局才可比，也不會因為活得久而刷分。' +
       'v10 把這條的天花板從 360 壓到 108（4.5 × 24）：實測 rule·rule 的進攻尺有 608 分' +
       '來自「在哪邊都能做的事」，而 breach 只有 70 —— 只學到「亂開槍也能高分」的族群' +
-      '沒有理由去壓老鷹。留著它是早期唯一的密集梯度，不是刪掉。',
+      '沒有理由去壓老鷹。v12 再壓到 72（3.0 × 24）：這一次不是它太貴，是它跟新加的 ' +
+      'annihilation（每場總擊殺，封頂 48）是同一件事的兩種量法，' +
+      '而流量那一種有已證實的漏洞 —— 把一局縮到 9 秒，分子分母一起縮小，比例照樣拿滿。' +
+      '所以「打死人」的錢改由總量項發，流量項留著當早期的密集梯度（不是刪掉）。',
     value: c => clamp(c.per1k(c.s.kills), 0, 24),
+  },
+  {
+    key: 'annihilation', label: '殲滅（每場打死幾台）', roles: both, weight: W.annihilation,
+    formula: `min(${ANNIHILATION_CAP}, 擊殺數) × ${W.annihilation}`,
+    cap: `每局最多算 ${ANNIHILATION_CAP} 台（一隊出兵上限 20 台；8 台已是壓倒性殲滅）`,
+    why: 'v12 新增，補的是 killPer1k／damagePer1k 共同的洞：那兩項是「每 1000 在場幀」的流量計量，' +
+      '把一局打得愈短、分子分母就一起縮小，比例照樣漂亮 —— ' +
+      '實測雙冠軍對打 9.7 秒收場、每場 5.9 殺，同一份考題的規則 AI 打 25.6 秒、每場 12.8 殺，' +
+      '但舊尺看不出這個差別。使用者要的是「激烈」，而激烈的定義是「場上有人在死」，' +
+      '不是「每秒死很多但整局沒死幾個」。這一項不隨時長打折：收了幾台就是幾台。' +
+      '封在 8 台跟 duelKill（封 4）、foeWall（封 8）同一個理由：不封頂會開出' +
+      '「只清人不推進」的刷分路線，而且 8 台之後讓 breach(70) 繼續當進攻席最大的單項 —— ' +
+      'v12 要改的是「早收場 vs 打死人」的相對價，不是把勝負項換掉。' +
+      '⚠ 這一項是「換掉」不是「加在上面」：同時把 killPer1k 4.5→3.0（−36）、' +
+      'damagePer1k 1.5→1.0（−12），通用交戰軸的天花板總量維持在 v11 的 242 分，' +
+      '否則尺的總量會自己長出 48 分，v10 那條「本業佔天花板 ≥40%」的驗收被新增項稀釋掉，' +
+      '而那是起步平衡度的來源（ai/balance.js --mode ceiling 每一版都要重新對一次）。',
+    value: c => clamp(c.s.kills || 0, 0, ANNIHILATION_CAP),
   },
   {
     key: 'duelKill', label: '貼身殲滅', roles: both, weight: W.duelKill,
@@ -454,17 +579,25 @@ const TERMS = [
   },
   {
     key: 'damagePer1k', label: '傷害輸出', roles: both, weight: W.damagePer1k,
-    formula: 'min(24, 造成傷害 / 在場幀 × 1000) × 1.5',
+    formula: `min(24, 造成傷害 / 在場幀 × 1000) × ${W.damagePer1k}`,
     why: '對重型車（4 hp）與磚牆的消耗都算實質貢獻，權重比直接擊殺低。' +
-      'v10 的天花板由 100 壓到 36，理由同擊殺效率：通用項不能比本業貴。',
+      'v10 的天花板由 100 壓到 36，理由同擊殺效率：通用項不能比本業貴。' +
+      'v12 再壓到 24（1.5→1.0）—— 跟 killPer1k 同一個理由（流量會被短局稀釋），' +
+      '也同一個目的：給 annihilation 那 48 分騰出預算，' +
+      '「不問角色的戰鬥項」合計天花板維持在 v11 的 242，不要因為加了新項就把本業比例稀释掉。',
     value: c => clamp(c.per1k(c.s.damageDone), 0, 24),
   },
   {
     key: 'accuracy', label: '每發子彈的產出', roles: both, weight: W.accuracy,
-    formula: 'min(1.5, 造成傷害 / 開火數) × 5',
-    cap: '每發 1.5 hp 封頂',
-    why: '反刷分的第一道閘：狂按射擊不會增加這一項，只會稀釋它。',
-    value: c => clamp(c.s.damageDone / Math.max(1, c.s.shots), 0, 1.5),
+    formula: `min(${ACCURACY_HP_CAP}, 造成傷害 / 開火數) × ${W.accuracy}`,
+    cap: `每發 ${ACCURACY_HP_CAP} hp 封頂（v12：原 1.5 → ${ACCURACY_HP_CAP}；總量 7.5 → ${(ACCURACY_HP_CAP * W.accuracy).toFixed(1)}）`,
+    why: '反刷分的第一道閘：狂按射擊不會增加這一項，只會稀釋它。' +
+      'v12 把封頂從 1.5hp/發收到 ' + ACCURACY_HP_CAP + 'hp/發 —— 1.5 那個天花板是「打 4hp 的重型車、' +
+      '兩發就滿」，實測模型的 19.1 發才換一台（規則 AI 4.2 發一殺）根本碰不到它，等於這條閘是裝飾。' +
+      '0.8 的意思是「每發至少推掉五分之一台車」才算準頭好；' +
+      '同時權重 5→10 讓滿分從 7.5 抬到 ' + (ACCURACY_HP_CAP * W.accuracy).toFixed(1) + '，' +
+      '所以這一項終於有牙：準的比亂掃的明顯多拿，但拿不到本業的量級。',
+    value: c => clamp(c.s.damageDone / Math.max(1, c.s.shots), 0, ACCURACY_HP_CAP),
   },
   {
     key: 'powerup', label: '撿到道具', roles: both, weight: W.powerup,
@@ -528,10 +661,17 @@ const TERMS = [
   },
   {
     key: 'spray', label: '大量無效彈', roles: both, weight: W.spray,
-    formula: '開火 >30 發且每發平均傷害 <0.25（是＝1／否＝0）（× -12）',
+    formula: `開火 >${SPRAY_SHOTS_MIN} 發且每發平均傷害 <${SPRAY_HP_MAX}（是＝1／否＝0）（× ${W.spray}）`,
     gate: '只對「真的由網路開車」的隊伍生效',
-    why: '彈雨即使偶爾命中也不該被獎勵；這一項跟 accuracy 封頂一起把亂掃射壓住。',
-    value: c => (c.hasPolicy && c.s.shots > 30 && c.s.damageDone / Math.max(1, c.s.shots) < 0.25 ? 1 : 0),
+    why: '彈雨即使偶爾命中也不該被獎勵；這一項跟 accuracy 封頂一起把亂掃射壓住。' +
+      'v12 從 -12 加到 ' + W.spray + '：實測雙冠軍每場 112 發、19.1 發才換一台，' +
+      '在舊價下「一直按射鍵」幾乎是免费的（-12 相對 breach 的 70 只是零頭），' +
+      '而觀眾看到的「不激烈」正是這個樣子 —— 螢幕上全是子彈，場上沒人倒下。' +
+      '門檻（' + SPRAY_SHOTS_MIN + ' 發、每發 ' + SPRAY_HP_MAX + 'hp）沿用 v6 的那把尺，只有單價動過；' +
+      '30 之後它跟 monotony(-35)、wallPin(-40) 同級，屬於「行為紀律」那一层的罰，' +
+      '不會蓋掉勝負項，但足以把純灑子彈的個體壓到選不上。',
+    value: c => (c.hasPolicy && c.s.shots > SPRAY_SHOTS_MIN &&
+      c.s.damageDone / Math.max(1, c.s.shots) < SPRAY_HP_MAX ? 1 : 0),
   },
 ];
 
@@ -660,7 +800,7 @@ function evaluatePolicy(arena, policy, o) {
   //   為什麼需要它：早期基因組動不動被「躺平 → 0」或「負分 → 0」壓成同一個 0，
   //   0 和 0 之間沒有順序，選擇就變成抽籤 —— 探針量到藍族 8 場考題有 50% 是 0 分，
   //   等於一半的世代對進攻族完全沒有壓力。留著 raw 才能在「都還沒開分」的世代裡
-  //   繼續認得出「誰离開分比較近」，而完全不用動 final 的語意（不升版、不需重評）。
+  //   繼續認得出「誰離開分比較近」，而完全不用動 final 的語意（不升版、不需重評）。
   const out = scoreOf(rep.teams[teamId], rep, teamId, cfg);
   return {
     score: out.final,
@@ -678,6 +818,10 @@ module.exports = {
   HALF_FIELD_PX, BESIEGE_FULL, GATE_HOLD_FULL, DENIAL_ZERO, DENIAL_FULL, DENIAL_PROOF_HP,
   GATE_HP_FULL, HALF_HP_FULL,
   // v11 拆牆的兩個尺：顯示端（ai/ledger.js、ledger.html）與測試要把算式寫成同一個數，
-  // 不能在别处再打一次 8／0.25 —— 改了這裡卻沒改那邊，履歷就跟實際計分對不上。
+  // 不能在別處再打一次 8／0.25 —— 改了這裡卻沒改那邊，履歷就跟實際計分對不上。
   WALL_CELL_CAP, WALL_FAR_SHARE,
+  // v12 激烈度的五把尺，同一個理由從這裡出口（測試與看板都讀它，不各打一份）。
+  ANNIHILATION_CAP, SPEED_KILL_PROOF, ACCURACY_HP_CAP, SPRAY_SHOTS_MIN, SPRAY_HP_MAX,
+  // v13（批次七）：破局的殲滅實績門檻，同一條紀律 —— 測試與履歷都從這裡取 6。
+  BREACH_KILL_PROOF,
 };

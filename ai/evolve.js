@@ -935,7 +935,7 @@ function genomePayload(j, sourceFile, exportedAt = new Date().toISOString()) {
     opponentRuler: j.champion.measuredAgainstLabel || j.champion.measuredAgainst || null,
     episodes: j.episodes,
     // 匯出時間：這是「快照」的時間戳。觀戰頁面永遠顯示這一刻的狀態，
-    // 不跑訓練它就不會變 —— 寫進檔案是為了讓面板有地方取证。
+    // 不跑訓練它就不會變 —— 寫進檔案是為了讓面板有地方取證。
     exportedAt,
     // 訓練履歷跟著基因組一起出去：瀏覽器按 Y 開戰時，那顆徽章要能講得出
     // 「這隻是第幾代、跑過幾段訓練、總共幾場」，而不是只有一個適應度數字。

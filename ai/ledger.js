@@ -92,7 +92,7 @@ function fingerprint(genomeJSON) {
   const links = (g.links || []).map(l => [l.in, l.out, !!l.enabled, +(l.weight).toFixed(6)])
     .sort((a, b) => (a[0] < b[0] ? -1 : a[0] > b[0] ? 1 : a[1] < b[1] ? -1 : a[1] > b[1] ? 1 : 0));
   // 節點只留「種類 + bias」（不含 id）：id 在不同存檔之間可能被重排，
-  // 拿它當節點身分會把同一隻網路算成兩隻。邊則用 id 對当端點——
+  // 拿它當節點身分會把同一隻網路算成兩隻。邊則用 id 對當端點——
   // 同一血緣的 id 是穩定的，變異／接續不會重新編號，所以能拿來判「是不是同一隻」。
   const nodes = (g.nodes || []).map(n => [n.kind || n.type, n.bias === undefined ? null : +n.bias.toFixed(6)])
     .sort();

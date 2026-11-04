@@ -8,8 +8,8 @@
 #                     近身格鬥／原地旋轉禁止，以及「位移不追車」那條已被刪掉的分支。
 #   test-neat.js     NEAT 本身（44 條）：創新編號、物種距離、crossover 取強親、
 #                     死分支的重啟邏輯。
-#   test-train.js    訓練管線（294 條）：競技場計量、算分 v11 逐項、checkpoint 往返、
-#                     --seed-from 暖啟動、--export-every 自動跟隨、紅旗指標。
+#   test-train.js    訓練管線（311 條）：競技場計量、算分 v13 逐項（含 breach 的殲滅門檻）、
+#                     checkpoint 往返、--seed-from 暖啟動、--export-every 自動跟隨、紅旗指標。
 #
 # ⚠ 這台機器是「全新 clone」，所以沒有 runs/（.gitignore 把整個目錄排除了，
 #   因為 checkpoint 會隨代數一直長大）。test-train.js 的暖啟動那一節需要模仿種子，

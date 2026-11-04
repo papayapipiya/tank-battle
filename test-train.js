@@ -349,9 +349,9 @@ section('fitness v7');
   // 版本號是 checkpoint 判斷「冠軍要不要先重評」的唯一依據（ai/evolve.js 讀
   // meta.champion.scoringVersion !== SCORING_VERSION），所以這一行真正的用途是：
   // 有人改了尺卻忘了升版本時，讓測試攔下來——不然舊冠軍會帶著新尺的分數繼續當冠軍。
-  T('F: 算分版本升到 11（v11 改的是拆牆那項的尺：按開火點離敵鷹多遠分近／遠兩堆），且兩套標準各自成表（進攻 23 項／防守 22 項）',
-    Fitness.SCORING_VERSION === 11 &&
-    Fitness.termsFor('attack').length === 23 && Fitness.termsFor('defense').length === 22,
+  T('F: 算分版本升到 13（v13 是把「破局」也寫成要有殲滅實績：breach × min(1, 擊殺/6)），且兩套標準各自成表（進攻 24 項／防守 23 項）',
+    Fitness.SCORING_VERSION === 13 &&
+    Fitness.termsFor('attack').length === 24 && Fitness.termsFor('defense').length === 23,
     `v${Fitness.SCORING_VERSION}：${Fitness.termsFor('attack').length}/${Fitness.termsFor('defense').length}`);
   // v10 的全部道理都在「兩席的本業上限要一樣高」這句話上：上限不對等，
   // 「換上自己模型的加分」就天生一邊多一邊少（探針量到 4.8×），起步就談不上平衡。
@@ -429,6 +429,9 @@ section('fitness v7');
     // （+70）加上早結束的 speed 分，淨值可能又變正 —— 那種個體如果有分，
     // 等於告訴網路這件事可以接受。
     const sin = base(); sin.ownBaseKilledBySelf = true; sin.foeBaseKilled = true; sin.duelKills = 4;
+    // ⚠ v13 之後 breach 要看殲滅實績：這裡把 kills 湊到門檻（6 台），讓「+70」這句話
+    //   在這裡仍然是字面意義 —— 這一節驗的是 v7 那條地板，不是 v13 那道門檻（門檻另有測試）。
+    sin.kills = Fitness.BREACH_KILL_PROOF;
     const eSin = exA(sin, { winner: 0, end: 'breach' });
     T('F v7: 自己打爆自家老鷹 → 本局分數歸 0（連破網與貼身殲滅一起抹平）',
       eSin.sum > 0 && eSin.total === 0 && eSin.ownGoal === true &&
@@ -437,8 +440,9 @@ section('fitness v7');
       `加總 ${eSin.sum.toFixed(2)} → 結算 ${eSin.total}`);
 
     // 反刷分：對手自己把家打爆時，規則上我們贏了，但這個勝利不是我們打出來的。
-    const eMerit = exA(base(), { winner: 0, end: 'breach' });
-    const lucky = base(); lucky.foeBaseOwnGoal = true; lucky.foeBaseKilled = true;
+    const merit = base(); merit.kills = Fitness.BREACH_KILL_PROOF;   // 同上：breach 要拿滿才比得出「戰功 vs 得利」
+    const eMerit = exA(merit, { winner: 0, end: 'breach' });
+    const lucky = Object.assign({}, merit); lucky.foeBaseOwnGoal = true; lucky.foeBaseKilled = true;
     const eGift = exA(lucky, { winner: 0, end: 'breach' });
     T('F v7: 對手自破 → 這局的贏不計戰功（breach／speed 都歸 0，但 won 仍是事實）',
       eMerit.won === true && eMerit.winByMerit === true && row(eMerit, 'breach') === 70 &&
@@ -467,11 +471,170 @@ section('fitness v7');
       `${dk(0).total.toFixed(2)} → ${dk(4).total.toFixed(2)}`);
   }
 
+  // ── v12 激烈度（批次六）：把「打死人」變成一筆存得下來的錢 ──────────
+  // 起因是量的，不是觀感（`node audit-intensity.js 120`，runs/audit-intensity.log）：
+  //   現任雙冠軍對打 平均 9.7 秒收場／中位 8.8 秒／每場 5.9 殺／112 發／19.1 發才換一台
+  //   同一份考題的規則 AI   25.6 秒／12.8 殺／54 發／4.2 發一殺
+  // 互射占比反而是模型的 60.9% 對規則的 9.0% ⇒ 缺的不是交火，是殲滅與收尾。
+  // 病根在尺：killPer1k／damagePer1k 是流量計量（一局縮到 9 秒，分子分母一起縮小、
+  // 比例照樣坐滿），而 breach(70)＋speed(20) 讓「繞過所有人直取老鷹」變成最優解。
+  // 下面逐條釘住的正是這四件事，外加「新項要換掉預算、不是疊上去」那條紀律。
+  {
+    const ex12 = (s, o) => Fitness.explainFitness(s, rep(s, o || {}), 0, {});   // 藍席＝進攻
+    const r12 = (ex, k) => ex.allItems.find(x => x.key === k);
+    const killStat = n => { const s = base(); s.kills = n; return s; };
+
+    const AN = Fitness.TERMS.find(t => t.key === 'annihilation');
+    T('F v12: 殲滅每台 +6、每局封在 8 台，兩個席位都算 —— 尺上第一筆不看時長的「總量」戰功',
+      !!AN && Fitness.weightOf(AN, 'attack') === 6 && Fitness.weightOf(AN, 'defense') === 6 &&
+      Fitness.termsFor('defense').some(t => t.key === 'annihilation') &&
+      r12(ex12(killStat(0)), 'annihilation').contribution === 0 &&
+      r12(ex12(killStat(5)), 'annihilation').contribution === 30 &&
+      r12(ex12(killStat(20)), 'annihilation').contribution === 48,
+      AN ? `封頂 ${Fitness.ANNIHILATION_CAP} 台 × ${Fitness.weightOf(AN, 'attack')}` : 'term 不存在');
+
+    // 這一段是 v12 的全部道理：把「速決但空手」與「殲滅但慢」放在一起比總分。
+    // 舊尺下速決吃 speed 滿檔（20）而空手無罰；新尺下 speed 要實績、殲滅另計。
+    const sprint = killStat(0);
+    const eSprint = ex12(sprint, { frames: 480, winner: 0, end: 'breach' });     // 8 秒斬首、零殲滅
+    const grind = base();                                                        // kills 4（實績滿檔）
+    const eGrind = ex12(grind, { frames: 1500, winner: 0, end: 'breach' });      // 25 秒清場再破網
+    T('F v12: 速決但一台沒打死 → speed 歸 0（v11 之前那是接近滿分的一項）',
+      r12(eSprint, 'speed').contribution === 0 && eSprint.winByMerit === true,
+      `8 秒（480 幀）破網、零殲滅 ⇒ speed ${r12(eSprint, 'speed').contribution}`);
+    T('F v12: 「殲滅但慢」打得過「速決但空手」—— 打死人比早收場值錢',
+      eGrind.total > eSprint.total + 20,
+      `清場 ${eGrind.total.toFixed(1)}（殲滅 ${r12(eGrind, 'annihilation').contribution}＋` +
+      `speed ${r12(eGrind, 'speed').contribution.toFixed(1)}）vs 速決 ${eSprint.total.toFixed(1)}`);
+
+    const accStat = (dmg, shots) => { const s = base(); s.damageDone = dmg; s.shots = shots; return ex12(s); };
+    T(`F v12: 準頭封在每發 ${Fitness.ACCURACY_HP_CAP}hp（原 1.5）—— 4hp 的車打兩發就摸到舊天花板，那條閘是裝飾`,
+      r12(accStat(40, 20), 'accuracy').value === Fitness.ACCURACY_HP_CAP &&
+      r12(accStat(40, 20), 'accuracy').contribution === Fitness.ACCURACY_HP_CAP * 10 &&
+      r12(accStat(8, 20), 'accuracy').value === 0.4 &&
+      r12(accStat(8, 20), 'accuracy').contribution === 4,
+      `封頂 ${Fitness.ACCURACY_HP_CAP} × 權重 10 ⇒ 滿分 ${(Fitness.ACCURACY_HP_CAP * 10).toFixed(1)}`);
+
+    const sprayStat = (shots, dmg) => { const s = base(); s.shots = shots; s.damageDone = dmg; return ex12(s); };
+    T('F v12: 彈雨的罰 -12→-30（100 發只推掉 10hp 開始賠分），門檻本身沒動',
+      r12(sprayStat(100, 10), 'spray').contribution === -30 &&
+      r12(sprayStat(100, 40), 'spray').contribution === 0 &&
+      r12(sprayStat(Fitness.SPRAY_SHOTS_MIN, 1), 'spray').contribution === 0 &&
+      Fitness.SPRAY_SHOTS_MIN === 30 && Fitness.SPRAY_HP_MAX === 0.25,
+      `${Fitness.SPRAY_SHOTS_MIN} 發／每發 ${Fitness.SPRAY_HP_MAX}hp 的門檻沿用 v6`);
+
+    // 新項是「換掉」流量項的預算，不是疊在尺上：通用交戰軸的天花板維持 v11 的 242，
+    // 否則「本業佔自己天花板 ≥40%」那條 v10 驗收會被新增項悄悄稀釋（實測 44%→38%）。
+    T('F v12: 加項不長總量 —— 通用交戰軸天花板釘在 242（v11 是 241.5，那 +0.5 全來自 accuracy 7.5→8.0），本業比例仍 ≥40%',
+      Math.abs(cA.byGroup.combat - 242) < 0.01 && Math.abs(cD.byGroup.combat - 242) < 0.01 &&
+      cA.job / cA.total >= 0.4 && cD.job / cD.total >= 0.4,
+      `戰鬥 攻 ${cA.byGroup.combat.toFixed(0)}／守 ${cD.byGroup.combat.toFixed(0)}｜` +
+      `本業占比 ${(100 * cA.job / cA.total).toFixed(1)}%／${(100 * cD.job / cD.total).toFixed(1)}%`);
+    T('F v12: 探針的軸分組收得到每一項（新項漏進 GROUP 會讓「本業佔天花板」靜默失真）',
+      [cA, cD].every(c => Math.abs(c.byGroup.objective + c.byGroup.process + c.byGroup.combat +
+        c.byGroup.discipline - c.total) < 0.01),
+      `攻 ${cA.byGroup.objective.toFixed(1)}+${cA.byGroup.process.toFixed(1)}+${cA.byGroup.combat.toFixed(1)} vs 總 ${cA.total.toFixed(1)}`);
+    T('F v12: 版本注記寫清楚「這一版動了哪幾項」（收斂曲線接縫要看得懂是尺變了、不是車變弱）',
+      /v12/.test(Fitness.SCORING_VERSION_NOTE) &&
+      /annihilation|殲滅/.test(Fitness.SCORING_VERSION_NOTE) &&
+      /speed/.test(Fitness.SCORING_VERSION_NOTE) && /spray/.test(Fitness.SCORING_VERSION_NOTE) &&
+      /killPer1k/.test(Fitness.SCORING_VERSION_NOTE),
+      Fitness.SCORING_VERSION_NOTE.slice(0, 60) + '…');
+  }
+
+  // ── v13 破局的殲滅實績門檻（批次七）──────────────────────────────
+  // v12 落實以後的第四次讀數（`node audit-intensity.js 120`，兩席成熟冠軍、藍 4064／紅 4026）：
+  //   中位終局 10.8 秒／每場擊殺 8.4 台／每 1 殺 14.5 發 —— 三條線都往對的方向走、也都還沒到，
+  //   而且 120 局裡 38.3% 還在 10 秒內收場。`--mode matrix` 那格講得最明白：
+  //   進攻席最大的單一項還是 breach ＋40.83／局（發放率 58.3%、不問清了幾台），局均 573 幀＝9.6 秒。
+  // ⇒ 「先清人再破網」與「繞過所有人直取老鷹」同分，尺沒在選前者。v13 就是把這條捷徑關掉。
+  // 下面釘的是門檻的形狀、門檻不吃掉稀有事件本身、以及「換尺不動老師」那條紀律。
+  {
+    const ex13 = (s, o) => Fitness.explainFitness(s, rep(s, o || {}), 0, {});
+    const r13 = (ex, k) => ex.allItems.find(x => x.key === k);
+    const k13 = n => { const s = base(); s.kills = n; return s; };
+    const WON = { winner: 0, end: 'breach' };                 // 破網取勝（同格局、只換擊殺數）
+    const P = Fitness.BREACH_KILL_PROOF;
+
+    T(`F v13: breach 由「打破就值 70」改成「打破 × min(1, 擊殺/${P})」（0 台→0、3 台→半額、${P} 台→拿滿、超過不加）`,
+      P === 6 && r13(ex13(k13(0), WON), 'breach').contribution === 0 &&
+      r13(ex13(k13(3), WON), 'breach').contribution === 35 &&
+      r13(ex13(k13(P), WON), 'breach').contribution === 70 &&
+      r13(ex13(k13(20), WON), 'breach').contribution === 70,
+      `門檻 ${P} 台｜滿額 70`);
+
+    // 這一條是 v13 的全部道理：同一種「打破老鷹」的結局，只差在場上有沒有真的清出人。
+    T('F v13: 空手斬首（8 秒破網、一台沒打死）拿不到勝負分，而「清人再破網」照樣拿滿 —— 捷徑關掉了',
+      r13(ex13(k13(0), { frames: 480, ...WON }), 'breach').contribution === 0 &&
+      r13(ex13(k13(P), { frames: 480, ...WON }), 'breach').contribution === 70 &&
+      ex13(k13(P), { frames: 480, ...WON }).total >
+      ex13(k13(0), { frames: 480, ...WON }).total + 50,
+      `速決空手 ${ex13(k13(0), { frames: 480, ...WON }).total.toFixed(1)} vs 速決清場 ${ex13(k13(P), { frames: 480, ...WON }).total.toFixed(1)}`);
+
+    // 但不能把「贏了卻沒清夠」打成 0 分地板：那正是批次一研究裡「0 分地板讓選壓消失」那個坑。
+    T('F v13: 空手斬首不歸零（其它項照給）—— 贏局仍留梯度，否則進攻席會整片同分',
+      ex13(k13(0), WON).total > 0 &&
+      ex13(k13(0), WON).sum === ex13(k13(0), WON).total,
+      `零殲滅破網 ${ex13(k13(0), WON).total.toFixed(2)}`);
+
+    T('F v13: 擊殺愈多分數不減（breach 門檻與 annihilation 同向，沒有「多殺人反而扣」的反轉）',
+      [0, 1, 2, 3, 4, 5, 6, 8, 12].every((n, i, arr) =>
+        i === 0 || ex13(k13(n), WON).total >= ex13(k13(arr[i - 1]), WON).total),
+      `0→12 殺：${[0, 3, 6, 12].map(n => ex13(k13(n), WON).total.toFixed(1)).join(' / ')}`);
+
+    // 分層的證據：門檻那兩個字（BREACH_KILL_PROOF／min(1, 擊殺)）只出現在計分端。
+    // 規則端要是知道了「要清幾台才算贏」，那就不是換尺、是改遊戲規則（那是另一個決定）。
+    T('F v13: 門檻只活在計分端 —— js/ 那幾支規則檔不認識它（破局在規則上照樣算藍隊贏，由 B 節釘住）',
+      (() => {
+        const fs = require('fs'), path = require('path');
+        const files = ['ai.js', 'game.js', 'entities.js', 'map.js', 'constants.js', 'mapgen.js'];
+        return files.every(n => {
+          const src = fs.readFileSync(path.join(__dirname, 'js', n), 'utf8');
+          return !/BREACH_KILL_PROOF|min\(1, 擊殺/.test(src);
+        }) && Fitness.BREACH_KILL_PROOF === 6;
+      })(),
+      'js/ai.js…mapgen.js 六支規則檔都不含門檻常數');
+
+    T('F v13: breach 仍是進攻表最大的一項（門檻只打折發放、沒有把它降成普通項）',
+      (() => {
+        const atk = Fitness.termsFor('attack');
+        const b = Fitness.weightOf(atk.find(t => t.key === 'breach'), 'attack');
+        return b === 70 && atk.every(t => t.key === 'breach' || Fitness.weightOf(t, 'attack') <= b);
+      })() && r13(ex13(k13(P), WON), 'breach').contribution === 70,
+      `權重仍 70，滿額實績下照樣是全表最大單項`);
+
+    T('F v13: 防守席不受影響（防守表沒有 breach 項，holdWin／holdGate 的算式一個字都沒動）',
+      !Fitness.termsFor('defense').some(t => t.key === 'breach') &&
+      Fitness.formulaOf(Fitness.TERMS.find(t => t.key === 'holdWin'), 'defense') ===
+      Fitness.termsFor('defense').find(t => t.key === 'holdWin').formula &&
+      /撐過時鐘|0\.4/.test(Fitness.termsFor('defense').find(t => t.key === 'holdWin').formula),
+      '防守 23 項、勝負兩檔不變');
+
+    T('F v13: 天花板三條不變量仍在（門檻不稀釋本業占比；合成成績每項打滿時 kills 40 ≥ 門檻）',
+      Math.abs(cA.total - 419.80) < 0.01 && Math.abs(cD.total - 428.93) < 0.01 &&
+      Math.abs(cA.job - cD.job) <= 10 &&
+      cA.job / cA.total >= 0.4 && cD.job / cD.total >= 0.4 &&
+      Math.abs(cA.byGroup.combat - 242) < 0.01,
+      `攻 ${cA.total.toFixed(2)}／守 ${cD.total.toFixed(2)}｜本業 ${(100 * cA.job / cA.total).toFixed(1)}%／${(100 * cD.job / cD.total).toFixed(1)}%｜差 ${Math.abs(cA.job - cD.job).toFixed(2)}`);
+
+    T('F v13: 版本注記寫清楚這一把動的是 breach 門檻、代價是進攻席掉分與信噪比',
+      /v13/.test(Fitness.SCORING_VERSION_NOTE) && /breach/.test(Fitness.SCORING_VERSION_NOTE) &&
+      new RegExp('min\\(1, 擊殺數/' + P + '\\)').test(Fitness.SCORING_VERSION_NOTE) &&
+      /信噪比|排序/.test(Fitness.SCORING_VERSION_NOTE) &&
+      /js\/ai\.js/.test(Fitness.SCORING_VERSION_NOTE),
+      Fitness.SCORING_VERSION_NOTE.slice(0, 46) + '…');
+  }
+
   const long = base();
   long.fieldFrames *= 3; long.kills *= 3; long.damageDone *= 3; long.shots *= 3;
   long.powerups *= 3; long.firepowerUp *= 3;
-  const ratio = A(long) / f;
-  T('F: 整局拉長 3 倍但節奏不變 → 分數只小幅變動（逐幀歸一化生效）',
+  // ⚠ 這條在比的是「逐幀歸一化」，所以要讓兩端的**開關項處在同一檔**：
+  //   v13 之後 breach 看殲滅實績（kills 4→0.67、12→1.0），直接拿 f 當分母會把
+  //   「門檻爬完」誤讀成「拉長局數讓分數暴衝」（實測比值 1.44，超出 1.35）。
+  //   分母改成「殲滅實績已拿滿」的同款成績（kills 6＝門檻），兩端只剩流量項的歸一化差異。
+  const fFull = base(); fFull.kills = Fitness.BREACH_KILL_PROOF;
+  const ratio = A(long) / A(fFull);
+  T('F: 整局拉長 3 倍但節奏不變 → 分數只小幅變動（逐幀歸一化生效；分母同站門檻內側，不然量到的是 v13 那道門）',
     ratio > 0.75 && ratio < 1.35, ratio.toFixed(2));
 
   const turtle = base();
@@ -961,7 +1124,7 @@ section('warm start');
      批次四又把規則 AI（也就是這裡的對手）調強，所以舊門檻那句「≥ 40%」
      對進攻種子根本不可能成立：行為複製的老師自己一槍都不破局（0/24）。
      進攻那一席改問過程（控制權／卡牆／開火／擊殺），並把「種子不會贏、
-     3 代之後會贏」當成一組斷言 —— 那才是暖啟動的價值所在。
+     5 代之後會贏」當成一組斷言 —— 那才是暖啟動的價值所在。
      考題固定：地圖 0..7 × 3 種子（hashSeed(0x517, i)），與 runs/seed-eval.js、
      runs/warm-probe.js 同一把尺，數字可以直接拿去對門檻。
      ⚠ 種子檔有兩條讀法：先拿本機現記的那份（runs/seed-<席位>.json，ai/imitate.js 的
@@ -1038,8 +1201,15 @@ section('warm start');
     }
 
     // --seed-from：族群從種子長出來，而不是從隨機權重（席位要對得上，G3 已驗過錯席會被擋）
+    // v12 起跑 5 代（原本 3 代）：尺開始付錢給「打死人」之後，進攻席先變成鬥士、
+    //   再變成破網手 —— 同一支種子、同一份考題實測（`node runs/warm-gens.js 3 5 6`）：
+    //     3 代 勝 7/24（29.2%）、破局 7/24、擊殺 10.75/局、每殺 9.5 發、平均 27.4 秒
+    //     5 代 勝 24/24、破局 24/24、擊殺 6.25/局、每殺 17.2 發、平均 13.6 秒
+    //   所以要改的是「量到第幾代」，不是門檻：暖啟動省下幾十代的結論沒變，
+    //   只是 v12 把「先清場再攻城」排在了前面（那正是使用者要的激烈）。
+    const WARM_GENS = 5;
     const file = path.join(TMP, `warm-${role}.json`);
-    evolve(['--seed-from', seedFile, '--role', role, '--gens', '3', '--pop', '8',
+    evolve(['--seed-from', seedFile, '--role', role, '--gens', String(WARM_GENS), '--pop', '8',
       '--stages', '0', '--seeds', '1', '--quiet', '--out', file]);
     const j = JSON.parse(fs.readFileSync(file, 'utf8'));
     T(`W: --seed-from 有寫進考題設定（之後知道這一輪是暖啟動來的・${role}）`,
@@ -1060,7 +1230,7 @@ section('warm start');
     //   原因在**尺**不在代步：亂走也會撿到過程分（防守席隨機#1 87.35 ＞ 老師 55.87
     //   ＞ 種子 22.61）。那是計分弱點，記在 BALANCE-RESEARCH.md；它同時意味著
     //   「第一代 mean 的高低」不能拿來論暖啟動划不划算。真正把關的是下面兩條：
-    //   3 代冠軍坐回席位打得過規則 AI（≥40%）、進攻 3 代冠軍真的破得了局（≥50%）。
+    //   5 代冠軍坐回席位打得過規則 AI（≥40%）、進攻 5 代冠軍真的破得了局（≥50%）。
     //   另一邊，種子分數天生低於老師（同一支 6 局考題：進攻 17.31 vs 77.09、防守 22.61 vs 55.87，
    //   破局 0/6 vs 2/6
     //   也不是尺壞，是「行為複製只能給過程」：忠實度 88% 學得動作，學不到那條 312px 的走廊。
@@ -1084,17 +1254,17 @@ section('warm start');
     T(`W: ${seat}族群第 0 號保留未變異的種子（邊數 ${links}，與種子同級）`,
       Math.abs(links - seedJson.seed.links.length) <= 3, `${links} vs ${seedJson.seed.links.length}`);
 
-    // 3 代之後的冠軍要坐在自己席位打得過規則 AI（原本這條測的是冷開機 6 代，
+    // ${WARM_GENS} 代之後的冠軍要坐在自己席位打得過規則 AI（原本這條測的是冷開機 6 代，
     // 實測 4/24 —— 那不是適應度壞，是「從零學起」本來就要幾十代；暖啟動把這段預算省下來）
     const c = inSeat({ kind: 'policy', policy: Genome.fromJSON(j.champion.genome).toPolicy() }, role);
-    T(`W: ${seat}暖啟動 3 代冠軍對規則 AI 勝率 ≥ 40%（實測 ${c.win}/${c.tot}＝${pc(c.win, c.tot)}）`,
+    T(`W: ${seat}暖啟動 ${WARM_GENS} 代冠軍對規則 AI 勝率 ≥ 40%（實測 ${c.win}/${c.tot}＝${pc(c.win, c.tot)}）`,
       c.win / c.tot >= 0.4, `${c.win}/${c.tot}（種子 ${a.win}/${a.tot}）`);
     T(`W: ${seat}贏的是網路自己贏的（控制權 ${pc(c.decided, c.field)}）`,
       c.decided / c.field > 0.9, pc(c.decided, c.field));
     if (role === 'attack') {
-      // 進攻席唯一的勝負項：會不會破局。種子 0%、3 代之後才學會贏 ——
+      // 進攻席唯一的勝負項：會不會破局。種子 0%、${WARM_GENS} 代之後才學會贏 ——
       // 這一條就是「暖啟動省下幾十代」最直接的證據。
-      T(`W: ${seat}3 代冠軍真的破得了局（${pc(c.breach, c.tot)}，種子只有 ${pc(a.breach, a.tot)}）`,
+      T(`W: ${seat}${WARM_GENS} 代冠軍真的破得了局（${pc(c.breach, c.tot)}，種子只有 ${pc(a.breach, a.tot)}）`,
         c.breach / c.tot >= 0.5, `${c.breach}/${c.tot}`);
     }
   }
@@ -1520,7 +1690,11 @@ section('ledger / provenance');
   //     v6：席位固定（藍＝進攻、紅＝防守），所以一局考績只打一個位子，
   //     games = 地圖數 × 每圖種子數（v5 是 ×2 座位）。
   const before = Checkpoint.load(file, Observation.OBS_SPEC).neat.generation;
-  const v = Ledger.verify(file, { stages: [0], seedsPerStage: 1, maxFrames: 1500 });
+  // maxFrames 要 ≥1890（規則上一局最多 1890 幀：30 秒倒數＋開場那幾幀）——
+  // 之前寫 1500，v11 剛好都卡在「進攻 25 秒內破網」所以結局有 reason；
+  // v12 開始付錢給殲滅之後，2 代 pop4 的冠軍會先在場上清人，1500 幀不夠它收尾，
+  // arena 只能回 end=null（考績就記成 '?'）。那不是尺壞，是考卷被截掉了。
+  const v = Ledger.verify(file, { stages: [0], seedsPerStage: 1, maxFrames: 1900 });
   const after = Checkpoint.load(file, Observation.OBS_SPEC);
   const a0 = after.assessments[0];
   T('U: --verify 追加考績且不改動代數',

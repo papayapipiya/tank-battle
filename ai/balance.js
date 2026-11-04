@@ -61,6 +61,9 @@ const GROUP = {
   besiege: 'process', denial: 'process',
   defense: 'process', halfDefense: 'process',
   teamwork: 'combat', killPer1k: 'combat', duelKill: 'combat', damagePer1k: 'combat',
+  // v12 的 annihilation 也是「不問角色」的戰鬥數據：打死人這件事兩個席位都做得到，
+  // 它不是本業（本業是破網／回防），留著它才能繼續用「本業佔天花板比例」這條看門。
+  annihilation: 'combat',
   accuracy: 'combat', powerup: 'combat', firepowerUp: 'combat', death: 'combat',
   stalemate: 'discipline', ownBaseCellLost: 'discipline', selfBaseShot: 'discipline',
   ownEagleBySelf: 'discipline', wallPin: 'discipline', monotony: 'discipline', spray: 'discipline',
@@ -545,7 +548,7 @@ function saturatedStat() {
     foeBaseMinDist: 0,                   // 貼到敵鷹中心 → penetration 滿
     foeWallLost: 8,                      // 舊尺（v10）用的總數欄位，留著給對照
     // v11 的 foeWall 讀的是 near／far，不再是 Lost：一個「每項都打滿」的進攻者
-    // 当然是貼到門口才拆的（near 8、far 0）。少了這兩欄，ceiling 會印出
+    // 當然是貼到門口才拆的（near 8、far 0）。少了這兩欄，ceiling 會印出
     // 「進攻天花板變低了」，而那是計量沒補齊，不是尺改壞了。
     foeWallNear: 8, foeWallFar: 0,
     besiegeFrames: 1000 * 0.15,          // v10 besiege：15% 貼門口就是滿
@@ -555,7 +558,7 @@ function saturatedStat() {
     supportFrames: 250,                  // 25% → teamwork 滿
     kills: 40, duelKills: 4,             // v10 封頂改 24／1000 幀（多給不會再漲，留著當防呆）
     damageDone: 40,                      // damagePer1k 封在 24
-    shots: 26,                           // 40/26 ≈ 1.54 → accuracy 封在 1.5；且不觸發 spray
+    shots: 26,                           // 40/26 ≈ 1.54 → accuracy 封在 0.8（v12）；且不觸發 spray
     powerups: 12, firepowerUp: 12,       // 兩個 per1k 項的封頂值
     deaths: 0, ownBaseCellsLost: 0, selfBaseShots: 0,
     ownBaseAlive: true, ownBaseKilledBySelf: false, foeBaseOwnGoal: false,
